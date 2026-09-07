@@ -1,83 +1,33 @@
 """Alternating geometry/trajectory optimization from BLUR-GS Algorithm 1."""
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
 import torch
-import yaml
 from torch import nn
 
-from .data import load_dataset, save_image
-from .geometry import exposure_path, solve_camera_motion
-from .losses import motion_loss, rgb_loss
-from .rendering import make_renderer, render_blur
-from .scene import GaussianScene
-from .trajectory import (
+from arguments import (
+    TrainConfig,
+    configure_cpu_threads,
+    read_config,
+    resolve_source,
+    training_parser,
+)
+from scene import load_dataset
+from utils.image_utils import save_image
+from utils.pose_utils import exposure_path, solve_camera_motion
+from utils.loss_utils import rgb_loss
+from utils.motion_loss_utils import motion_loss
+from gaussian_renderer import make_renderer
+from gaussian_renderer.blur_renderer import render_blur
+from scene.gaussian_model import GaussianScene
+from scene.trajectory import (
     CHECKPOINT_VERSION,
     TRAJECTORY_MODEL,
     ExposureTrajectory,
     require_linear_checkpoint,
 )
-
-
-@dataclass
-class TrainConfig:
-    backend: str = "torch"
-    device: str = "cpu"
-    iterations: int = 30000
-    exposure_samples: int = 9
-    trajectory_steps: int = 1
-    geometry_steps: int = 1
-    joint_start: int = 27000
-    joint_lr_scale: float = 0.1
-    scene_lr: float = 0.001
-    position_lr: float = 0.00016
-    trajectory_lr: float = 0.001
-    depth_warmup_steps: int = 2000
-    motion_ramp_steps: int = 1000
-    motion_weight: float = 0.1
-    geometry_motion_weight: float = 0.05
-    flow_weight: float = 1.0
-    magnitude_weight: float = 0.1
-    direction_weight: float = 0.01
-    magnitude: str = "endpoint"
-    acceleration_weight: float = 0.0
-    pose_weight: float = 0.01
-    dssim_weight: float = 0.2
-    alpha_threshold: float = 0.1
-    linear_exposure: bool = True
-    initialize_motion: bool = True
-    gradient_clip: float = 10.0
-    checkpoint_every: int = 1000
-    log_every: int = 50
-    seed: int = 42
-
-    def validate(self):
-        if self.iterations <= 0 or self.exposure_samples < 3:
-            raise ValueError("Positive iterations and at least three exposure samples are required")
-        if self.trajectory_steps < 1 or self.geometry_steps < 1:
-            raise ValueError("Both alternating phases need at least one step")
-        if self.log_every < 1 or self.checkpoint_every < 1 or self.gradient_clip <= 0:
-            raise ValueError("Logging/checkpoint intervals and gradient_clip must be positive")
-        if self.magnitude not in {"endpoint", "path"} or not 0 <= self.dssim_weight <= 1:
-            raise ValueError("Invalid magnitude mode or DSSIM weight")
-        if not 0 <= self.alpha_threshold <= 1 or self.joint_start < 0:
-            raise ValueError("Invalid alpha threshold or joint start")
-        for key, value in asdict(self).items():
-            if (
-                key.endswith("weight") or key.endswith("lr") or key.endswith("_steps")
-            ) and value < 0:
-                raise ValueError(f"{key} must be nonnegative")
-        if self.device.startswith("cuda") and not torch.cuda.is_available():
-            raise RuntimeError("CUDA unavailable; use configs/smoke.yaml for CPU verification")
-
-
-def read_config(path: str | None) -> TrainConfig:
-    options = yaml.safe_load(Path(path).read_text(encoding="utf-8")) if path else {}
-    config = TrainConfig(**(options or {}))
-    config.validate()
-    return config
 
 
 def phase_at(step: int, config: TrainConfig) -> str:
@@ -301,3 +251,22 @@ def train(manifest: str, config: TrainConfig, output: str, resume: str | None = 
     }
     (directory / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return summary
+
+
+def main(argv=None):
+    args = training_parser().parse_args(argv)
+    config = read_config(
+        args.config,
+        iterations=args.iterations,
+        device=args.device,
+        backend=args.backend,
+        exposure_samples=args.exposure_samples,
+    )
+    configure_cpu_threads(config.device)
+    result = train(resolve_source(args.source_path), config, args.model_path, args.resume)
+    print(json.dumps(result, indent=2))
+    return result
+
+
+if __name__ == "__main__":
+    main()

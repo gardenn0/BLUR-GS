@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from blur_gs.colmap import import_colmap, read_model
+from scene.colmap_loader import import_colmap, read_model
 
 
 @pytest.mark.parametrize("binary", [False, True])

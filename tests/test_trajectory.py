@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from blur_gs.geometry import se3_exp
-from blur_gs.trajectory import (
+from utils.pose_utils import se3_exp
+from scene.trajectory import (
     CHECKPOINT_VERSION,
     TRAJECTORY_MODEL,
     ExposureTrajectory,

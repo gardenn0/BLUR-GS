@@ -3,7 +3,7 @@
 import torch
 from torch import Tensor, nn
 
-from .geometry import adjoint, inverse_pose, se3_exp
+from utils.pose_utils import adjoint, inverse_pose, se3_exp
 
 TRAJECTORY_MODEL = "linear_se3"
 CHECKPOINT_VERSION = 2

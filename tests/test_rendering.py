@@ -3,9 +3,10 @@ import importlib.util
 import pytest
 import torch
 
-from blur_gs.geometry import se3_exp
-from blur_gs.rendering import GsplatRenderer, TorchRenderer, render_blur
-from blur_gs.scene import GaussianScene
+from utils.pose_utils import se3_exp
+from gaussian_renderer import GsplatRenderer, TorchRenderer
+from gaussian_renderer.blur_renderer import render_blur
+from scene.gaussian_model import GaussianScene
 
 
 def scene_and_camera(device="cpu"):

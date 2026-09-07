@@ -19,7 +19,7 @@ python -m pip install -r third_party/image-as-an-imu/requirements.txt
 python -m pip install -e third_party/image-as-an-imu
 python -m pip install -e .
 
-python -m blur_gs prepare-motion --data data/my-scene/scene.json --checkpoint checkpoints/image-as-imu.pth --device cuda
+python scripts/prepare_motion.py --data data/my-scene/scene.json --checkpoint checkpoints/image-as-imu.pth --device cuda
 ```
 
 The model is instantiated with `supervise_pose=False`, loaded strictly with the provided

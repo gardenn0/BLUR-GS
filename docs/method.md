@@ -8,20 +8,20 @@ additional claims made by these papers.
 
 | BLUR-GS specification | Implementation | Status |
 | --- | --- | --- |
-| Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.GaussianScene` | Anisotropic Gaussian scene, DC appearance; fixed point count |
-| Eqs. 13-15 continuous SE(3) trajectory | `trajectory.ExposureTrajectory`, `geometry.se3_exp` | Linear in Lie algebra, two 6D endpoint controls per image |
-| Eqs. 17-20 exposure integration and L1/DSSIM | `rendering.render_blur`, `losses.rgb_loss` | Uniform temporal samples by default; optional weights in renderer API |
-| Eqs. 21-23 fixed observed motion | `motion.ImageAsIMU`, `prepare_motion` | Official network adapter; locally defined confidence heuristic |
-| Eqs. 24-28 Gaussian z-depth and backprojection | Both renderers, `geometry.backproject` | Alpha-normalized expected z-depth, midpoint reference |
-| Eqs. 29-34 predicted exposure motion | `geometry.exposure_path` | Exact pinhole reprojection along the continuous pose samples |
-| Eqs. 35-37 small-motion geometry | `geometry.motion_jacobian`, `solve_camera_motion` | fx/fy-aware camera-motion Jacobian, weighted damped least squares |
-| Eqs. 38-44 robust flow, magnitude, direction | `losses.motion_loss` | Confidence-normalized Charbonnier; endpoint magnitude default |
+| Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.gaussian_model.GaussianScene` | Anisotropic Gaussian scene, DC appearance; fixed point count |
+| Eqs. 13-15 continuous SE(3) trajectory | `scene.trajectory.ExposureTrajectory`, `utils.pose_utils.se3_exp` | Linear in Lie algebra, two 6D endpoint controls per image |
+| Eqs. 17-20 exposure integration and L1/DSSIM | `gaussian_renderer.blur_renderer.render_blur`, `utils.loss_utils.rgb_loss` | Uniform temporal samples by default; optional weights in renderer API |
+| Eqs. 21-23 fixed observed motion | `scene.motion_prior.ImageAsIMU`, `prepare_motion` | Official network adapter; locally defined confidence heuristic |
+| Eqs. 24-28 Gaussian z-depth and backprojection | Both renderers, `utils.pose_utils.backproject` | Alpha-normalized expected z-depth, midpoint reference |
+| Eqs. 29-34 predicted exposure motion | `utils.pose_utils.exposure_path` | Exact pinhole reprojection along the continuous pose samples |
+| Eqs. 35-37 small-motion geometry | `utils.pose_utils.motion_jacobian`, `solve_camera_motion` | fx/fy-aware camera-motion Jacobian, weighted damped least squares |
+| Eqs. 38-44 robust flow, magnitude, direction | `utils.motion_loss_utils.motion_loss` | Confidence-normalized Charbonnier; endpoint magnitude default |
 | Eqs. 45-47 smoothness and anchor | `ExposureTrajectory.regularizers` | Twist acceleration analytically zero; local midpoint twist norm retained |
-| Eqs. 49-50 depth warm-up | `training.mix_depth` | Optional registered initial depth; gradually fully GS-derived |
-| Eqs. 52-56, Algorithm 1 alternating optimization | `training.Trainer.step` | Explicit parameter freezing, two optimizers, reduced-LR joint stage |
+| Eqs. 49-50 depth warm-up | `train.mix_depth` | Optional registered initial depth; gradually fully GS-derived |
+| Eqs. 52-56, Algorithm 1 alternating optimization | `train.Trainer.step` | Explicit parameter freezing, two optimizers, reduced-LR joint stage |
 | Sec. 1.14 variable-specific translation/rotation routing | General Jacobian available | Specialized separate observed component losses not enabled |
-| Eq. 63 path consistency | `losses.path_consistency` | Standalone tested API; not enabled in trainer without measured paths |
-| Eqs. 75-76 sharp novel-view rendering | `evaluation.render_checkpoint` | Standard sharp GS rendering without blur estimator |
+| Eq. 63 path consistency | `utils.motion_loss_utils.path_consistency` | Standalone tested API; not enabled in trainer without measured paths |
+| Eqs. 75-76 sharp novel-view rendering | `render.render_checkpoint` | Standard sharp GS rendering without blur estimator |
 
 ## Coordinate contract
 

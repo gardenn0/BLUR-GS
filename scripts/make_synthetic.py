@@ -1,16 +1,23 @@
 """Deterministic analytic fixture for integration tests, not an IAAI prediction or benchmark."""
 
+import argparse
 import json
 from pathlib import Path
+import sys
+
+# Direct script execution must work from a fresh checkout without an editable install.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import torch
 
-from .data import save_image
-from .geometry import exposure_path, se3_exp
-from .rendering import TorchRenderer, render_blur
-from .scene import GaussianScene
-from .trajectory import ExposureTrajectory
+from utils.image_utils import save_image
+from utils.pose_utils import exposure_path, se3_exp
+from gaussian_renderer import TorchRenderer
+from gaussian_renderer.blur_renderer import render_blur
+from scene.gaussian_model import GaussianScene
+from scene.trajectory import ExposureTrajectory
 
 
 @torch.no_grad()
@@ -92,3 +99,21 @@ def make_synthetic(output: str | Path, size: int = 32, views: int = 3, seed: int
     path = root / "scene.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Create an analytic CPU test scene, not IAAI predictions"
+    )
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--size", type=int, default=32)
+    parser.add_argument("--views", type=int, default=3)
+    args = parser.parse_args(argv)
+    torch.set_num_threads(min(4, torch.get_num_threads()))
+    result = make_synthetic(args.output, args.size, args.views)
+    print(result)
+    return result
+
+
+if __name__ == "__main__":
+    main()

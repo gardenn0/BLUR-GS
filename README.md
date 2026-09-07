@@ -12,25 +12,48 @@ GPU 성능 검증을 완료했다는 의미는 아닙니다. 세부 범위는 [�
 
 ## 구조
 
+기존 3DGS 계열 연구 저장소처럼 최상위 실행 파일과 역할별 모듈을 사용합니다.
+학습 코드는 실제로 `train.py`에 있으며, 특정 연구의 알고리즘을 복사한 것은 아닙니다.
+
 ```text
 blur-3dgs/
-├── configs/                 # GPU 연구 설정, CPU smoke 설정
-├── docs/                    # 수식 대응, 데이터 규격, IAAI 연결, 검증 기록
-├── src/blur_gs/
-│   ├── geometry.py          # SE(3), 깊이 역투영, 노출 경로, 가중 최소제곱
-│   ├── trajectory.py        # 두 endpoint twist의 linear se(3) 궤적
-│   ├── scene.py             # anisotropic Gaussians, 표준 3DGS PLY 출력
-│   ├── rendering.py         # PyTorch / gsplat RGB·깊이 렌더링, 재블러링
-│   ├── motion.py            # 공식 Image-as-an-IMU 모델 및 관측값 캐시
-│   ├── losses.py            # RGB, 흐름·크기·방향·경로 손실
-│   ├── training.py          # 궤적 ↔ 장면 교대 최적화, joint refinement, 재개
-│   ├── data.py              # 데이터 검증과 로딩
-│   ├── colmap.py            # COLMAP text/binary 입력
-│   ├── synthetic.py         # 수치 검증용 합성 장면
-│   └── evaluation.py        # 선명한 뷰 렌더링, PSNR/SSIM
-├── tests/                   # 기하·미분·좌표·학습 경로 테스트
-└── .github/workflows/       # CPU 테스트 CI
+├── train.py                     # 교대 학습, joint refinement, 체크포인트 재개
+├── render.py                    # 선명한 뷰 렌더링
+├── metrics.py                   # 체크포인트 렌더링 + sharp GT 기반 PSNR/SSIM
+├── arguments/__init__.py        # TrainConfig, YAML, CLI 옵션
+├── scene/
+│   ├── __init__.py              # 장면 로딩 인터페이스
+│   ├── gaussian_model.py        # anisotropic Gaussians, 표준 DC-SH PLY
+│   ├── cameras.py               # Frame, 카메라 좌표 검증
+│   ├── dataset_readers.py       # manifest·영상·모션 캐시 로딩
+│   ├── colmap_loader.py         # COLMAP text/binary 입력
+│   ├── trajectory.py            # 두 endpoint twist의 linear se(3) 궤적
+│   └── motion_prior.py          # 고정된 공식 Image-as-an-IMU 어댑터
+├── gaussian_renderer/
+│   ├── __init__.py              # PyTorch / gsplat RGB·깊이 렌더링
+│   └── blur_renderer.py         # virtual pose 렌더링·노출 적분
+├── utils/
+│   ├── pose_utils.py            # SE(3), 역투영, 노출 경로, 최소제곱
+│   ├── image_utils.py           # 영상 입출력·광도 변환
+│   ├── loss_utils.py            # RGB·SSIM·공통 손실
+│   └── motion_loss_utils.py     # 흐름·크기·방향·경로 손실
+├── scripts/
+│   ├── import_colmap.py         # 데이터 준비
+│   ├── prepare_motion.py        # 사전학습 모션 관측값 캐시
+│   └── make_synthetic.py        # 수치 검증용 합성 장면
+├── configs/                     # GPU 연구 설정, CPU smoke 설정
+├── tests/                       # 기하·미분·학습·실행 파일 회귀 테스트
+├── docs/                        # 수식 대응·데이터·검증 기록
+├── blur_gs/                     # 이전 python -m blur_gs 명령의 얇은 호환 계층
+└── .github/workflows/           # CPU 테스트 CI
 ```
+
+공통 구조는 [Deblur-GS](https://github.com/Chaphlagical/Deblur-GS),
+[DeblurGS](https://github.com/taekkii/deblurgs),
+[CoMoGaussian](https://github.com/Jho-Yonsei/CoMoGaussian),
+[BAGS](https://github.com/snldmt/BAGS)를 참고했습니다. CUDA 소스를 직접 포함하지 않고
+`gsplat`을 패키지로 설치하므로 빈 `submodules/`는 만들지 않습니다.
+
 
 `data/`, `outputs/`, `checkpoints/`, `third_party/`, `.venv/`는 실행 중 생성하는 로컬
 디렉터리이며 Git에서 제외됩니다. 첨부 PDF와 사전학습 가중치도 저장소에 포함하지 않습니다.
@@ -45,9 +68,9 @@ source .venv/bin/activate
 python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 python -m pip install -e '.[dev]'
 
-python -m blur_gs synthetic --output data/smoke --size 32 --views 3
-python -m blur_gs train --data data/smoke/scene.json --config configs/smoke.yaml --output outputs/smoke
-python -m blur_gs evaluate --data data/smoke/scene.json --checkpoint outputs/smoke/checkpoint.pt --output outputs/smoke-eval
+python scripts/make_synthetic.py --output data/smoke --size 32 --views 3
+python train.py -s data/smoke -m outputs/smoke --config configs/smoke.yaml
+python metrics.py -s data/smoke -m outputs/smoke --output outputs/smoke-eval
 python -m pytest -q
 python -m ruff check .
 ```
@@ -65,14 +88,14 @@ SIMPLE_PINHOLE 모델만 지원합니다. 원본 카메라가 왜곡 모델이�
 `image_undistorter`를 먼저 실행하세요.
 
 ```bash
-python -m blur_gs import-colmap --model /path/to/undistorted/sparse --images /path/to/undistorted/images --output data/my-scene --downscale 4
+python scripts/import_colmap.py --model /path/to/undistorted/sparse --images /path/to/undistorted/images --output data/my-scene --downscale 4
 ```
 
 [Image-as-an-IMU 연결 안내](docs/image_as_imu.md)에 따라 공식 `iaai` 패키지와 가중치를
 준비한 후 고정된 관측값을 추출합니다. 학습에는 새로 생성한 `scene.motion.json`을 사용합니다.
 
 ```bash
-python -m blur_gs prepare-motion --data data/my-scene/scene.json --checkpoint checkpoints/image-as-imu.pth --device cuda
+python scripts/prepare_motion.py --data data/my-scene/scene.json --checkpoint checkpoints/image-as-imu.pth --device cuda
 ```
 
 GPU 학습 환경에서는 CUDA 지원 PyTorch와 빌드 도구를 설치한 후 다음을 실행합니다.
@@ -81,8 +104,8 @@ PyTorch를 그대로 사용하면 GPU 학습이 되지 않습니다.
 
 ```bash
 python -m pip install -e '.[cuda,dev]'
-python -m blur_gs train --data data/my-scene/scene.motion.json --config configs/default.yaml --output outputs/my-scene
-python -m blur_gs render --data data/my-scene/scene.motion.json --checkpoint outputs/my-scene/checkpoint.pt --output outputs/my-scene-render --backend gsplat --device cuda
+python train.py -s data/my-scene -m outputs/my-scene --config configs/default.yaml
+python render.py -s data/my-scene -m outputs/my-scene --output outputs/my-scene-render --backend gsplat --device cuda
 ```
 
 체크포인트 재개 시 학습 설정과 프레임 순서를 유지하고, 총 반복 횟수를 늘릴 수 있습니다.
@@ -90,12 +113,34 @@ python -m blur_gs render --data data/my-scene/scene.motion.json --checkpoint out
 렌더링에는 사용할 수 있지만, linear 학습은 새로운 run으로 시작해야 합니다.
 
 ```bash
-python -m blur_gs train --data data/my-scene/scene.motion.json --config configs/default.yaml --output outputs/my-scene --resume outputs/my-scene/checkpoint_001000.pt
+python train.py -s data/my-scene -m outputs/my-scene --config configs/default.yaml --resume outputs/my-scene/checkpoint_001000.pt
 ```
 
 학습 출력은 `checkpoint.pt`, `scene.ply`, `sharp/*.png`, `metrics.jsonl`, `summary.json`입니다.
 PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel view는 새로운 `w2c`,
 `K`를 가진 데이터 manifest로 렌더링할 수 있으며, 추론 시 모션 추정 모델은 필요 없습니다.
+
+## 실행 인터페이스와 호환성
+
+- `train.py -s <장면 경로> -m <출력 폴더>` 형태를 지원합니다.
+  `--source_path`/`--data`, `--model_path`/`--output`도 같은 옵션입니다.
+- `-s`는 준비된 장면 폴더 또는 manifest 파일을 받습니다. 폴더를 지정하면
+  `scene.motion.json`을 우선 선택하고, 없으면 `scene.json`을 사용합니다.
+  원본 COLMAP 폴더를 자동 변환하거나 없는 모션 캐시를 생성하지 않습니다.
+- `render.py`와 `metrics.py`의 `-m`은 학습 출력 폴더입니다. 중간 체크포인트는
+  `--checkpoint`로 지정하세요. `-s`를 생략하면 체크포인트에 저장된 manifest 경로를
+  사용하며, 데이터를 이동했다면 `-s`를 다시 지정해야 합니다.
+- 기본 렌더 출력은 체크포인트 옆 `renders/`, 평가 출력은 `evaluation/`입니다.
+  `metrics.py`는 체크포인트에서 다시 렌더링하여 명시된 sharp GT와 PSNR/SSIM을 비교합니다.
+  기존 렌더 폴더만 평가하는 외부 3DGS의 모든 옵션을 그대로 지원하는 것은 아닙니다.
+- `--config` 생략 시 기존과 동일하게 CPU/PyTorch 기본 설정입니다.
+  GPU는 `--config configs/default.yaml`을 명시하세요.
+  `--device`, `--backend`, `--iterations`, `--exposure-samples`로 덮어쓸 수 있습니다.
+- 이전 `python -m blur_gs train|render|evaluate|synthetic|import-colmap|prepare-motion`
+  명령과 `blur-gs` 콘솔 명령은 새 코드로 연결됩니다. Python import 경로는
+  [구조 변경 안내](docs/layout.md)를 따르세요.
+- 체크포인트 format version 2, linear 궤적, 기본 virtual pose 9개, smoke 5개,
+  렌더러와 최적화 수식은 폴더 재구성으로 변경하지 않았습니다.
 
 ## 구현 선택과 현재 제약
 

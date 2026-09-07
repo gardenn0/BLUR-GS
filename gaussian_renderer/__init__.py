@@ -5,8 +5,8 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from .geometry import pixel_grid
-from .scene import GaussianScene
+from utils.pose_utils import pixel_grid
+from scene.gaussian_model import GaussianScene
 
 
 @dataclass
@@ -123,41 +123,3 @@ def make_renderer(backend: str):
     if backend == "gsplat":
         return GsplatRenderer()
     raise ValueError(f"Unknown renderer: {backend}")
-
-
-def srgb_to_linear(rgb: Tensor) -> Tensor:
-    return torch.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055).clamp_min(0).pow(2.4))
-
-
-def linear_to_srgb(rgb: Tensor) -> Tensor:
-    return torch.where(
-        rgb <= 0.0031308, 12.92 * rgb, 1.055 * rgb.clamp_min(0.0031308).pow(1 / 2.4) - 0.055
-    )
-
-
-def render_blur(
-    renderer,
-    scene: GaussianScene,
-    poses: Tensor,
-    K: Tensor,
-    height: int,
-    width: int,
-    weights: Tensor | None = None,
-    linear_exposure: bool = True,
-) -> Tensor:
-    n = len(poses)
-    if weights is None:
-        weights = poses.new_full((n,), 1 / n)
-    if weights.shape != (n,) or not torch.isfinite(weights).all() or (weights < 0).any():
-        raise ValueError("Shutter weights must be finite nonnegative temporal weights")
-    if weights.sum() <= 0:
-        raise ValueError("At least one shutter weight must be positive")
-    weights = weights / weights.sum()
-    accumulated = None
-    for pose, weight in zip(poses, weights):
-        rgb = renderer(scene, pose, K, height, width).rgb
-        if linear_exposure:
-            rgb = srgb_to_linear(rgb)
-        value = weight * rgb
-        accumulated = value if accumulated is None else accumulated + value
-    return linear_to_srgb(accumulated) if linear_exposure else accumulated

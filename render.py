@@ -5,11 +5,14 @@ from pathlib import Path
 
 import torch
 
-from .data import load_manifest, read_frame, read_image, save_image
-from .losses import ssim
-from .rendering import make_renderer
-from .scene import GaussianScene
-from .trajectory import checkpoint_midpoint
+from arguments import configure_cpu_threads, render_parser, resolve_source
+from scene import load_manifest
+from scene.dataset_readers import read_frame
+from utils.image_utils import read_image, save_image
+from utils.loss_utils import ssim
+from gaussian_renderer import make_renderer
+from scene.gaussian_model import GaussianScene
+from scene.trajectory import checkpoint_midpoint
 
 
 @torch.no_grad()
@@ -78,3 +81,33 @@ def render_checkpoint(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
     return summary
+
+
+def run_render_cli(argv=None, *, evaluate=False):
+    args = render_parser(evaluate=evaluate).parse_args(argv)
+    configure_cpu_threads(args.device)
+    checkpoint = (
+        Path(args.checkpoint) if args.checkpoint else Path(args.model_path) / "checkpoint.pt"
+    )
+    if args.source_path:
+        manifest = resolve_source(args.source_path)
+    else:
+        saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        source = saved.get("manifest")
+        if not source:
+            raise ValueError("Checkpoint has no dataset manifest; provide -s or --data")
+        manifest = resolve_source(source)
+    output = args.output or str(checkpoint.parent / ("evaluation" if evaluate else "renders"))
+    result = render_checkpoint(
+        str(checkpoint), manifest, output, args.device, args.backend, args.split, evaluate
+    )
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def main(argv=None):
+    return run_render_cli(argv)
+
+
+if __name__ == "__main__":
+    main()

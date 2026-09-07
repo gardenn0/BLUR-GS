@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from .geometry import quaternion_matrix
+from utils.pose_utils import quaternion_matrix
 
 
 class GaussianScene(nn.Module):

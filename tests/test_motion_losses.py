@@ -1,8 +1,8 @@
 import torch
 
-from blur_gs.geometry import pixel_grid
-from blur_gs.losses import motion_loss, path_consistency
-from blur_gs.motion import restore_prediction
+from utils.pose_utils import pixel_grid
+from utils.motion_loss_utils import motion_loss, path_consistency
+from scene.motion_prior import restore_prediction
 
 
 def test_start_grid_alignment_for_spatially_varying_flow():

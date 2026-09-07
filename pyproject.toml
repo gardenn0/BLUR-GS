@@ -16,12 +16,17 @@ dev = ["pytest>=8", "ruff>=0.11"]
 [project.scripts]
 blur-gs = "blur_gs.cli:main"
 
+[tool.setuptools]
+py-modules = ["train", "render", "metrics"]
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["arguments*", "scene*", "gaussian_renderer*", "utils*", "scripts*", "blur_gs*"]
+exclude = ["tests*", "data*", "outputs*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100

@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from blur_gs.geometry import (
+from utils.pose_utils import (
     adjoint,
     exposure_path,
     inverse_pose,
@@ -9,7 +9,7 @@ from blur_gs.geometry import (
     se3_exp,
     solve_camera_motion,
 )
-from blur_gs.trajectory import ExposureTrajectory
+from scene.trajectory import ExposureTrajectory
 
 
 def camera(dtype=torch.float64):

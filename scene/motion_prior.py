@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 from torch.nn import functional as F
 
-from .data import load_manifest, read_frame
+from .dataset_readers import load_manifest, read_frame
 
 
 def restore_prediction(

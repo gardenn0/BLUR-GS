@@ -2,9 +2,10 @@ import json
 
 import torch
 
-from blur_gs.evaluation import render_checkpoint
-from blur_gs.synthetic import make_synthetic
-from blur_gs.training import TrainConfig, Trainer, mix_depth, train
+from render import render_checkpoint
+from scripts.make_synthetic import make_synthetic
+from arguments import TrainConfig
+from train import Trainer, mix_depth, train
 
 
 def test_alternation_freezes_correct_parameters_and_resume(tmp_path):

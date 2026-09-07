@@ -34,13 +34,35 @@ Reproduce checks with:
 ```bash
 python -m pytest -q
 python -m ruff check .
-python -m blur_gs synthetic --output data/smoke --size 32 --views 3
-python -m blur_gs train --data data/smoke/scene.json --config configs/smoke.yaml --output outputs/smoke
-python -m blur_gs evaluate --data data/smoke/scene.json --checkpoint outputs/smoke/checkpoint.pt --output outputs/smoke-eval
+python scripts/make_synthetic.py --output data/smoke --size 32 --views 3
+python train.py --data data/smoke/scene.json --config configs/smoke.yaml --output outputs/smoke
+python metrics.py --data data/smoke/scene.json --checkpoint outputs/smoke/checkpoint.pt --output outputs/smoke-eval
 ```
 
 Use new output directories when rerunning fixture generation or starting a new training
 run. Local generated artifacts are excluded from Git.
+
+## Research-layout refactor (2026-09-07)
+
+- **37 passed, 1 skipped** (CUDA-only check), 85.23 seconds. Used a fresh Windows
+  temporary directory and disabled the pytest cache plugin to avoid pre-existing ACL issues.
+- Ruff lint and formatting checks passed.
+- Direct `train.py`, `render.py`, `metrics.py`, and the three preparation scripts expose
+  working help even when invoked by absolute path from another working directory.
+- A subprocess integration test generates a synthetic scene, trains through `train.py`,
+  renders through `render.py`, evaluates through `metrics.py`, and resumes through the
+  legacy `python -m blur_gs train` command.
+- Prepared-directory and explicit-manifest input, `-s`/`-m` and legacy option aliases,
+  default nine exposure samples, and configuration overrides are covered by tests.
+- Compared 52 function/class ASTs against the pre-refactor Git HEAD: all were unchanged.
+  The deliberate exceptions are CLI-aware config overrides and an updated preparation
+  script path in a missing-cache error message. Imports and entry-point code were relocated.
+- Built a wheel without installing it into the existing environment. In an isolated
+  Python process, all 18 selected entry-point and implementation modules loaded directly
+  from that wheel, not from the checkout.
+- Dataset/cache schemas, checkpoint version 2 and optimization equations remain unchanged.
+  No densification/pruning, high-order SH, external CUDA source, or new GPU validation
+  was added as part of this structural refactor.
 
 ## Linear implementation run (2026-09-07)
 
