@@ -18,7 +18,7 @@ blur-3dgs/
 ├── docs/                    # 수식 대응, 데이터 규격, IAAI 연결, 검증 기록
 ├── src/blur_gs/
 │   ├── geometry.py          # SE(3), 깊이 역투영, 노출 경로, 가중 최소제곱
-│   ├── trajectory.py        # 연속 cubic Bezier se(3) 궤적
+│   ├── trajectory.py        # 두 endpoint twist의 linear se(3) 궤적
 │   ├── scene.py             # anisotropic Gaussians, 표준 3DGS PLY 출력
 │   ├── rendering.py         # PyTorch / gsplat RGB·깊이 렌더링, 재블러링
 │   ├── motion.py            # 공식 Image-as-an-IMU 모델 및 관측값 캐시
@@ -86,6 +86,8 @@ python -m blur_gs render --data data/my-scene/scene.motion.json --checkpoint out
 ```
 
 체크포인트 재개 시 학습 설정과 프레임 순서를 유지하고, 총 반복 횟수를 늘릴 수 있습니다.
+현재 linear 체크포인트는 format version 2입니다. 기존 Bezier 체크포인트는 선명한 뷰
+렌더링에는 사용할 수 있지만, linear 학습은 새로운 run으로 시작해야 합니다.
 
 ```bash
 python -m blur_gs train --data data/my-scene/scene.motion.json --config configs/default.yaml --output outputs/my-scene --resume outputs/my-scene/checkpoint_001000.pt
@@ -97,8 +99,18 @@ PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel vie
 
 ## 구현 선택과 현재 제약
 
-- BLUR-GS 문서가 허용한 cubic Bezier 궤적을 사용합니다. CoMoGaussian의 Neural ODE,
+- 두 6D endpoint twist를 `xi(t) = (1-t) xi_start + t xi_end`로 선형 보간하고,
+  `T(t) = T0 @ exp(xi(t))`로 SE(3) pose를 생성합니다. 보간은 Lie algebra 기준이며,
+  카메라 위치가 항상 월드 좌표에서 직선을 그리거나 body velocity가 일정하다는 의미는 아닙니다.
+  CoMoGaussian의 Neural ODE,
   CMR 및 학습되는 픽셀별 노출 가중치는 현재 이식하지 않았습니다.
+- 재블러링 virtual pose는 기본 **9개** (`exposure_samples: 9`), CPU smoke는 **5개**입니다.
+  시작과 끝을 포함해 균일하게 샘플링하며, 두 학습 endpoint와 렌더링 샘플 수는 별개입니다.
+  기본 9개는 `t = 0, 0.125, ..., 1`이고 가중치는 각각 `1/9`입니다.
+  학습 iteration마다 중간 시점 깊이를 위한 렌더링을 별도로 한 번 수행합니다.
+- Linear twist의 2차 시간 미분은 0이므로 acceleration loss는 정확히 0이며 기본 가중치도
+  0입니다. 중간 시점 pose anchor는 계속 적용합니다. `linear_exposure`는 이 궤적 선택이
+  아니라 선형 광도 공간에서 재블러링할지를 뜻하는 별도 설정입니다.
 - Gaussian 수는 고정되고 외관은 degree-zero SH입니다. densification/pruning 및
   고차 SH는 후속 고품질 재구성 실험에서 확장할 부분입니다.
 - Image-as-an-IMU 공식 모델은 흐름과 깊이를 출력합니다. 신뢰도는 BLUR-GS에서 추가한

@@ -13,7 +13,12 @@ from .geometry import exposure_path, solve_camera_motion
 from .losses import motion_loss, rgb_loss
 from .rendering import make_renderer, render_blur
 from .scene import GaussianScene
-from .trajectory import ExposureTrajectory
+from .trajectory import (
+    CHECKPOINT_VERSION,
+    TRAJECTORY_MODEL,
+    ExposureTrajectory,
+    require_linear_checkpoint,
+)
 
 
 @dataclass
@@ -37,7 +42,7 @@ class TrainConfig:
     magnitude_weight: float = 0.1
     direction_weight: float = 0.01
     magnitude: str = "endpoint"
-    acceleration_weight: float = 0.01
+    acceleration_weight: float = 0.0
     pose_weight: float = 0.01
     dssim_weight: float = 0.2
     alpha_threshold: float = 0.1
@@ -216,7 +221,8 @@ class Trainer:
     def save(self, path: Path, step: int):
         path.parent.mkdir(parents=True, exist_ok=True)
         checkpoint = {
-            "format_version": 1,
+            "format_version": CHECKPOINT_VERSION,
+            "trajectory_model": TRAJECTORY_MODEL,
             "step": step,
             "config": asdict(self.config),
             "scene": self.scene.state_dict(),
@@ -230,6 +236,7 @@ class Trainer:
 
     def resume(self, path: str) -> int:
         checkpoint = torch.load(path, map_location=self.config.device, weights_only=True)
+        require_linear_checkpoint(checkpoint)
         if checkpoint["frame_names"] != [f.name for f in self.frames]:
             raise ValueError("Resume requires the same training frames in the same order")
         previous = checkpoint["config"]
@@ -284,6 +291,8 @@ def train(manifest: str, config: TrainConfig, output: str, resume: str | None = 
             )
             save_image(directory / "sharp" / f"{i:06d}.png", rendered.rgb)
     summary = {
+        "trajectory_model": TRAJECTORY_MODEL,
+        "exposure_samples": config.exposure_samples,
         "iterations": config.iterations,
         "final_step_metrics": metrics,
         "initialization_notes": trainer.initialization_notes,

@@ -2,6 +2,7 @@
 backend: gsplat
 device: cuda
 iterations: 30000
+# Render nine virtual poses including both exposure endpoints (two learned endpoint twists).
 exposure_samples: 9
 trajectory_steps: 1
 geometry_steps: 1
@@ -19,7 +20,8 @@ magnitude_weight: 0.1
 direction_weight: 0.01
 # Image-as-an-IMU measures endpoints, not total length of a nonlinear path.
 magnitude: endpoint
-acceleration_weight: 0.01
+# A linear twist has zero second temporal derivative.
+acceleration_weight: 0.0
 pose_weight: 0.01
 dssim_weight: 0.2
 alpha_threshold: 0.1

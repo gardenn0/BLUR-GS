@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from .data import save_image
-from .geometry import exposure_path
+from .geometry import exposure_path, se3_exp
 from .rendering import TorchRenderer, render_blur
 from .scene import GaussianScene
 from .trajectory import ExposureTrajectory
@@ -42,13 +42,15 @@ def make_synthetic(output: str | Path, size: int = 32, views: int = 3, seed: int
         trajectory.initialize_from_camera_motion(
             torch.tensor([0.05, -0.02, 0.005, 0.008, 0.018, -0.004])
         )
-        # Nonzero curvature exercises the continuous trajectory and acceleration terms.
-        trajectory.controls[1, 1] += 0.007
-        trajectory.controls[2, 1] -= 0.007
         times = torch.linspace(0, 1, 9)
+        # Keep the same mildly curved ground truth independently of the learner's
+        # linear parameterization: this is the old cubic fixture's analytic offset.
+        twists = trajectory.twists(times)
+        twists[:, 1] += 3 * 0.007 * times * (1 - times) * (1 - 2 * times)
+        truth_poses = pose[None] @ se3_exp(twists)
         ref = renderer(truth, trajectory.at(0.5), K, size, size)
-        path, valid = exposure_path(ref.depth, K, trajectory.at(0.5), trajectory(times))
-        blur = render_blur(renderer, truth, trajectory(times), K, size, size)
+        path, valid = exposure_path(ref.depth, K, trajectory.at(0.5), truth_poses)
+        blur = render_blur(renderer, truth, truth_poses, K, size, size)
         name = f"{i:03d}"
         save_image(root / "images" / f"{name}.png", blur)
         save_image(root / "sharp" / f"{name}.png", ref.rgb)

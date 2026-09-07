@@ -26,6 +26,10 @@ def test_alternation_freezes_correct_parameters_and_resume(tmp_path):
     assert any(not torch.equal(before_scene[k], p) for k, p in trainer.scene.named_parameters())
     checkpoint = tmp_path / "saved.pt"
     trainer.save(checkpoint, 2)
+    saved = torch.load(checkpoint, weights_only=True)
+    assert saved["format_version"] == 2
+    assert saved["trajectory_model"] == "linear_se3"
+    assert saved["trajectories"]["0.controls"].shape == (2, 6)
     resumed = Trainer(str(manifest), config)
     assert resumed.resume(str(checkpoint)) == 2
     a, b = trainer.step(0, 2), resumed.step(0, 2)
@@ -74,3 +78,26 @@ def test_depth_warmup_uses_scene_units_and_propagates_gradients():
     torch.testing.assert_close(depth, torch.tensor([[1.5, 4.0]]))
     depth.sum().backward()
     torch.testing.assert_close(gs.grad, torch.tensor([[0.5, 1.0]]))
+
+
+def test_default_virtual_pose_count_is_independent_of_two_controls(tmp_path):
+    manifest = make_synthetic(tmp_path / "data", size=16, views=1)
+    trainer = Trainer(str(manifest), TrainConfig())
+    trajectory = trainer.trajectories[0]
+    trajectory.initialize_from_camera_motion(torch.tensor([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    assert trainer.config.exposure_samples == 9
+    torch.testing.assert_close(trainer.times, torch.arange(9) / 8)
+    assert trajectory.controls.shape == (2, 6)
+    assert trajectory(trainer.times).shape == (9, 4, 4)
+    calls = []
+    renderer = trainer.renderer
+
+    def recording_renderer(scene, pose, K, height, width):
+        calls.append(pose.detach().clone())
+        return renderer(scene, pose, K, height, width)
+
+    trainer.renderer = recording_renderer
+    trainer.objective(0, 0, "joint")
+    # One midpoint depth pass plus nine exposure renders, with no change to sample count.
+    assert len(calls) == 10
+    torch.testing.assert_close(torch.stack(calls[1:]), trajectory(trainer.times))

@@ -12,6 +12,10 @@ The test suite checks:
 - Weighted least-squares recovery with unequal fx/fy, arbitrary principal points, masked outliers,
   and invalid depth/flow; translation inverse-depth dependence and rotation depth independence.
 - Motion initialization with a nonidentity world-to-camera pose and midpoint anchoring.
+- Linear endpoint/interior interpolation, gradients to both endpoint controls, exact zero
+  twist acceleration, and nine exposure renders independently of the two learned endpoints.
+- Versioned linear checkpoint metadata, legacy midpoint rendering, and explicit rejection
+  of incompatible Bezier optimizer state when resuming linear training.
 - Image-level temporal reversal and transport of start-referenced flow to midpoint geometry.
 - Differentiable zero-confidence loss, nonlinear path length, and crop restoration/vector scaling.
 - RGB/expected-depth rendering with nonzero finite camera and scene gradients.
@@ -38,7 +42,23 @@ python -m blur_gs evaluate --data data/smoke/scene.json --checkpoint outputs/smo
 Use new output directories when rerunning fixture generation or starting a new training
 run. Local generated artifacts are excluded from Git.
 
-## Completed local run (2026-09-07)
+## Linear implementation run (2026-09-07)
+
+- **27 passed, 1 skipped** (CUDA-only check), 13.49 seconds. The initial attempt encountered
+  access-denied errors in the pre-existing Windows pytest temporary/cache directories.
+  The complete suite passed with a fresh temporary directory and the cache plugin disabled.
+- Ruff lint and formatting checks passed.
+- Linear interpolation, endpoint gradients, zero twist acceleration, both alternating phases,
+  joint training, loss decrease, checkpoint saving/resume, and rendering are covered.
+- Verified exactly nine exposure renders plus one reference-depth pass with the default
+  configuration, independently of the two learned endpoint controls. The smoke config
+  continues to use five exposure samples.
+- Format-version-2 linear checkpoints are identified explicitly; legacy Bezier midpoint
+  rendering is tested and legacy training resume is rejected with an actionable message.
+- The synthetic fixture retains its mildly curved ground-truth motion analytically; it
+  was not made linear merely to match the new learner. No new real-data/GPU benchmark was run.
+
+## Initial Bezier implementation run (2026-09-07, before the linear change)
 
 - `pytest -q`: **20 passed, 1 skipped** (CUDA-only check), 31.17 seconds.
 - `ruff check .`: passed. `ruff format --check .`: all 25 Python files formatted.

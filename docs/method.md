@@ -9,14 +9,14 @@ additional claims made by these papers.
 | BLUR-GS specification | Implementation | Status |
 | --- | --- | --- |
 | Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.GaussianScene` | Anisotropic Gaussian scene, DC appearance; fixed point count |
-| Eqs. 13-15 continuous SE(3) trajectory | `trajectory.ExposureTrajectory`, `geometry.se3_exp` | Cubic Bezier in Lie algebra, four 6D controls per image |
+| Eqs. 13-15 continuous SE(3) trajectory | `trajectory.ExposureTrajectory`, `geometry.se3_exp` | Linear in Lie algebra, two 6D endpoint controls per image |
 | Eqs. 17-20 exposure integration and L1/DSSIM | `rendering.render_blur`, `losses.rgb_loss` | Uniform temporal samples by default; optional weights in renderer API |
 | Eqs. 21-23 fixed observed motion | `motion.ImageAsIMU`, `prepare_motion` | Official network adapter; locally defined confidence heuristic |
 | Eqs. 24-28 Gaussian z-depth and backprojection | Both renderers, `geometry.backproject` | Alpha-normalized expected z-depth, midpoint reference |
 | Eqs. 29-34 predicted exposure motion | `geometry.exposure_path` | Exact pinhole reprojection along the continuous pose samples |
 | Eqs. 35-37 small-motion geometry | `geometry.motion_jacobian`, `solve_camera_motion` | fx/fy-aware camera-motion Jacobian, weighted damped least squares |
 | Eqs. 38-44 robust flow, magnitude, direction | `losses.motion_loss` | Confidence-normalized Charbonnier; endpoint magnitude default |
-| Eqs. 45-47 smoothness and anchor | `ExposureTrajectory.regularizers` | Sampled twist second difference and local midpoint twist norm |
+| Eqs. 45-47 smoothness and anchor | `ExposureTrajectory.regularizers` | Twist acceleration analytically zero; local midpoint twist norm retained |
 | Eqs. 49-50 depth warm-up | `training.mix_depth` | Optional registered initial depth; gradually fully GS-derived |
 | Eqs. 52-56, Algorithm 1 alternating optimization | `training.Trainer.step` | Explicit parameter freezing, two optimizers, reduced-LR joint stage |
 | Sec. 1.14 variable-specific translation/rotation routing | General Jacobian available | Specialized separate observed component losses not enabled |
@@ -36,6 +36,24 @@ Depth is positive camera z, not inverse depth or ray length. `T(t) = T0 @ exp(xi
 and `X_t = T(t) @ inverse(T_ref) @ X_ref` make Eq. 29 internally consistent. The Jacobian
 instead maps camera body displacement to image displacement; its sign and coordinate
 frame are converted with the SE(3) adjoint when initializing right-composed controls.
+
+The current user-selected trajectory is linear in the shared reference Lie algebra:
+`xi(t) = (1-t) xi_start + t xi_end`. There are two learned 6D endpoint controls per image.
+SE(3) matrices are produced by the exponential, rather than elementwise matrix interpolation.
+This is not a guarantee of a world-space straight camera-center path or constant body velocity
+when the endpoint twists do not commute. Twist acceleration is exactly zero; its loss is
+reported as zero and disabled by default. The midpoint remains trainable with a pose anchor.
+
+Virtual render poses are sampled independently of the number of learned endpoints. Default
+`exposure_samples=9` yields times `0, 1/8, ..., 1`, each weighted `1/9`; the smoke config uses
+5 samples. Each objective additionally performs one midpoint depth render (the midpoint is
+already among the nine default exposure poses). `linear_exposure` controls radiometric
+integration in linear light and is unrelated to the trajectory parameterization.
+
+New checkpoints carry `format_version=2` and `trajectory_model=linear_se3`. Resume rejects
+older four-control Bezier optimizer state with a clear error. Rendering can still recover
+the exact midpoint of legacy version-1 trajectories using their cubic midpoint weights;
+it does not reinterpret their saved trajectories as linear.
 
 The [gsplat CUDA rasterizer](https://github.com/nerfstudio-project/gsplat/blob/v1.5.3/gsplat/cuda/csrc/RasterizeToPixels3DGSFwd.cu)
 evaluates at half-integer centers. Its adapter adds 0.5 to principal points. COLMAP import
@@ -101,7 +119,8 @@ response or exposure gain is fitted.
 
 The supplied CoMoGaussian paper models latent trajectories with Neural ODEs and additionally
 uses CMR transforms and learned pixel weighting. This implementation follows the supplied
-BLUR-GS specification, which explicitly permits splines/Bezier as continuous trajectories.
+BLUR-GS specification, which leaves the continuous parameterization open. The user selected
+linear endpoint-twist interpolation for the current implementation.
 It does not claim numerical equivalence to the CoMoGaussian architecture or reported
 metrics. The reference is useful for continuous exposure rendering and for future backbone
 comparisons. No external repository source has been vendored here.

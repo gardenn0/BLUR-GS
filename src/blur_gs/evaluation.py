@@ -9,7 +9,7 @@ from .data import load_manifest, read_frame, read_image, save_image
 from .losses import ssim
 from .rendering import make_renderer
 from .scene import GaussianScene
-from .trajectory import ExposureTrajectory
+from .trajectory import checkpoint_midpoint
 
 
 @torch.no_grad()
@@ -46,9 +46,7 @@ def render_checkpoint(
             # Names are not a camera identity: only reuse a learned midpoint for the same calibration.
             initial = saved["trajectories"][f"{i}.initial_w2c"]
             if torch.allclose(initial, frame.w2c, atol=1e-6):
-                trajectory = ExposureTrajectory(initial)
-                trajectory.controls.copy_(saved["trajectories"][f"{i}.controls"])
-                pose = trajectory.at(0.5)
+                pose = checkpoint_midpoint(saved, i)
         result = renderer(scene, pose, frame.K, *frame.image.shape[:2])
         save_image(destination / f"{index:06d}.png", result.rgb)
         row = {

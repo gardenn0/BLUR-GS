@@ -1,6 +1,7 @@
 backend: torch
 device: cpu
 iterations: 24
+# Five rendered virtual poses for the lightweight CPU test.
 exposure_samples: 5
 trajectory_steps: 1
 geometry_steps: 1
