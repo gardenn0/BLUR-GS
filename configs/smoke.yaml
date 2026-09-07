@@ -1,0 +1,16 @@
+backend: torch
+device: cpu
+iterations: 24
+exposure_samples: 5
+trajectory_steps: 1
+geometry_steps: 1
+joint_start: 18
+joint_lr_scale: 0.3
+scene_lr: 0.01
+position_lr: 0.003
+trajectory_lr: 0.001
+motion_ramp_steps: 1
+motion_weight: 0.1
+geometry_motion_weight: 0.1
+checkpoint_every: 12
+log_every: 4
