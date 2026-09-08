@@ -64,17 +64,20 @@ class GaussianScene(nn.Module):
         clone_mask: Tensor,
         keep_mask: Tensor,
         jitter: float = 0.5,
+        *,
+        optimizer: torch.optim.Optimizer | None = None,
     ) -> dict[str, int]:
         """Prune weak Gaussians and split selected survivors into two children.
 
         The split preserves the parent's appearance and approximately preserves its
-        opacity mass while shrinking each child. Optimizers must be rebuilt after this
-        method because the Parameter objects change shape.
+        opacity mass while shrinking each child. If supplied, the optimizer is remapped
+        in place: unchanged survivors retain their history and both split children
+        start with zero moments. Parameter-level step counters and group options survive.
         """
         n = len(self.means)
         if clone_mask.shape != (n,) or keep_mask.shape != (n,):
             raise ValueError("refinement masks must match the Gaussian count")
-        keep_mask = keep_mask.bool()
+        keep_mask = keep_mask.bool().clone()
         if not keep_mask.any():
             keep_mask[self.opacities.argmax()] = True
         clone_mask = clone_mask.bool() & keep_mask
@@ -89,7 +92,9 @@ class GaussianScene(nn.Module):
         if len(cloned):
             directions = torch.randn_like(self.means[cloned])
             directions = torch.nn.functional.normalize(directions, dim=-1, eps=1e-8)
-            offsets = directions * self.scales[cloned] * jitter
+            local_offsets = directions * self.scales[cloned] * jitter
+            rotations = quaternion_matrix(self.quats[cloned])
+            offsets = (rotations @ local_offsets[..., None]).squeeze(-1)
             means = torch.cat((means, self.means[cloned] + offsets), 0)
             child_scales = self.log_scales[cloned] - torch.log(self.means.new_tensor(1.6))
             log_scales = torch.cat((log_scales, child_scales), 0)
@@ -102,11 +107,33 @@ class GaussianScene(nn.Module):
             opacity_logits[parent_positions] = torch.logit(child_opacity)
             log_scales[parent_positions] = child_scales
 
-        self.means = nn.Parameter(means)
-        self.log_scales = nn.Parameter(log_scales)
-        self.quats = nn.Parameter(quats)
-        self.opacity_logits = nn.Parameter(opacity_logits)
-        self.color_logits = nn.Parameter(color_logits)
+        source_indices = torch.cat((kept, cloned))
+        reset_moments = torch.cat((clone_mask[kept], torch.ones_like(cloned, dtype=torch.bool)))
+        values = dict(
+            means=means,
+            log_scales=log_scales,
+            quats=quats,
+            opacity_logits=opacity_logits,
+            color_logits=color_logits,
+        )
+        for name, value in values.items():
+            old = getattr(self, name)
+            new = nn.Parameter(value, requires_grad=old.requires_grad)
+            if optimizer is not None:
+                for group in optimizer.param_groups:
+                    group["params"] = [new if p is old else p for p in group["params"]]
+                state = optimizer.state.pop(old, None)
+                if state:
+                    remapped = {}
+                    for key, item in state.items():
+                        if isinstance(item, Tensor) and item.shape == old.shape:
+                            item = item[source_indices].clone()
+                            item[reset_moments] = 0
+                        elif isinstance(item, Tensor):
+                            item = item.clone()
+                        remapped[key] = item
+                    optimizer.state[new] = remapped
+            setattr(self, name, new)
         return {"before": n, "pruned": n - len(kept), "cloned": len(cloned), "after": len(means)}
 
     def export_ply(self, path: str | Path) -> None:

@@ -118,6 +118,9 @@ python render.py -s data/my-scene -m outputs/my-scene --output outputs/my-scene-
 체크포인트 재개 시 학습 설정과 프레임 순서를 유지하고, 총 반복 횟수를 늘릴 수 있습니다.
 현재 linear 체크포인트는 format version 2입니다. 기존 Bezier 체크포인트는 선명한 뷰
 렌더링에는 사용할 수 있지만, linear 학습은 새로운 run으로 시작해야 합니다.
+새 체크포인트는 증식 판단용 누적 통계와 PyTorch CPU/CUDA 난수 상태도 저장합니다.
+동일 환경에서 재개하면 다음 분할도 이어서 재현합니다. 이 정보가 없는 이전 체크포인트도
+불러올 수 있지만, 이후 분할 결과의 정확한 재현은 보장하지 않으며 경고를 표시합니다.
 
 ```bash
 python train.py -s data/my-scene -m outputs/my-scene --config configs/default.yaml --resume outputs/my-scene/checkpoint_001000.pt
@@ -192,8 +195,9 @@ Linear 체크포인트는 version 2를 유지하고 spline/ODE는 version 3으�
 - Linear twist의 2차 시간 미분은 0이므로 acceleration loss는 정확히 0이며 기본 가중치도
   0입니다. 중간 시점 pose anchor는 계속 적용합니다. `linear_exposure`는 이 궤적 선택이
   아니라 선형 광도 공간에서 재블러링할지를 뜻하는 별도 설정입니다.
-- 외관은 degree-zero SH입니다. GPU 기본 설정에서는 위치 gradient가 큰 Gaussian을
-  분할하고 낮은 opacity Gaussian을 제거합니다. 최대 개수와 스케줄은
+- 외관은 degree-zero SH입니다. GPU 기본 설정에서는 여러 뷰의 위치 gradient 크기를
+  누적·평균해 Gaussian을 분할하고 낮은 opacity Gaussian을 제거합니다. 분할 위치에
+  Gaussian 회전을 반영하며, 유지된 Gaussian의 Adam 상태도 보존합니다. 최대 개수와 스케줄은
   `configs/default.yaml`에서 조정할 수 있으며 `densify_every: 0`으로 끌 수 있습니다.
 - Image-as-an-IMU 공식 모델은 흐름과 깊이를 출력합니다. 신뢰도는 BLUR-GS에서 추가한
   텍스처·포화·유효영역 휴리스틱이며 학습된 confidence head가 아닙니다.

@@ -127,18 +127,42 @@ response or exposure gain is fitted.
 
 The supplied CoMoGaussian paper models latent trajectories with Neural ODEs and additionally
 uses CMR transforms and learned pixel weighting. This implementation follows the supplied
-BLUR-GS specification, which leaves the continuous parameterization open. The user selected
-linear endpoint-twist interpolation for the current implementation.
+BLUR-GS specification, which leaves the continuous parameterization open. Linear endpoint
+interpolation remains the default; spline and a separate twist-space ODE are also available.
 It does not claim numerical equivalence to the CoMoGaussian architecture or reported
 metrics. The reference is useful for continuous exposure rendering and for future backbone
 comparisons. No external repository source has been vendored here.
+
+## Gaussian refinement and checkpoint continuity
+
+Between refinement checks, geometry/joint updates accumulate the norms of position gradients
+before clipping. Each Gaussian is scored by its mean over nonzero finite observations, so
+the view present exactly at a refinement boundary does not determine the entire split set.
+Zero gradient is used as an unobserved proxy; this is a world-space gradient heuristic, not
+the original 3DGS screen-space visibility/radius statistics. Statistics start accumulating
+with the first geometry update and reset after each eligible check, including checks with
+no topology change. Scene scale therefore still affects the gradient threshold.
+
+Split offsets are sampled in the parent's principal-axis frame and rotated by its quaternion
+into world space. Unchanged surviving Gaussians retain their Adam moments after pruning or
+splitting. Both children of a split have zero moments; the optimizer's shared per-parameter
+step counters and group settings are retained. At least one Gaussian survives pruning.
+
+New checkpoints additionally store pending refinement sums/counts, the PyTorch CPU RNG state,
+and the RNG state of the selected CUDA device when training on CUDA. Resume restores them
+after constructing and loading all models/optimizers. The existing linear version 2 and
+nonlinear version 3 remain readable; older checkpoints without these fields initialize empty
+statistics and warn if refinement can still occur. Exact future splits cannot be recovered
+from a checkpoint that never stored the random state. Continuity checks apply to the same
+device and runtime; switching CPU/CUDA or nondeterministic CUDA kernels is not a guarantee of
+bitwise equality.
 
 ## Experimental limitations
 
 This version has gradient-based Gaussian splitting and opacity pruning, but no high-order SH,
 multi-scale training, rolling-shutter model, dynamic-object mask, or learned shutter weights.
-The topology refinement intentionally uses a simple optimizer restart after each event rather
-than reproducing the full 3DGS adaptive-density schedule. PyTorch rendering is an O(NHW)
+The topology refinement does not reproduce the full 3DGS adaptive-density schedule.
+PyTorch rendering is an O(NHW)
 correctness backend with no tile culling; gsplat
 is the intended GPU backend. Startup scale estimation is chunked O(N^2) nearest-neighbor
 distance unless input scales are supplied. COLMAP import caps initial points at 10,000 by

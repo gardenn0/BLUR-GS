@@ -13,7 +13,7 @@ The test suite checks:
   and invalid depth/flow; translation inverse-depth dependence and rotation depth independence.
 - Motion initialization with a nonidentity world-to-camera pose and midpoint anchoring.
 - Linear endpoint/interior interpolation, gradients to both endpoint controls, exact zero
-  twist acceleration, and nine exposure renders independently of the two learned endpoints.
+  twist acceleration, and ten exposure renders independently of the two learned endpoints.
 - Versioned linear checkpoint metadata, legacy midpoint rendering, and explicit rejection
   of incompatible Bezier optimizer state when resuming linear training.
 - Image-level temporal reversal and transport of start-referenced flow to midpoint geometry.
@@ -23,10 +23,13 @@ The test suite checks:
 - Exact freezing of the inactive parameter group, motion gradients to both groups,
   checkpoint resume continuity, depth warm-up, and decreasing RGB loss on a synthetic scene.
 - Gaussian split/prune topology changes and checkpoint resume after a changed Gaussian count.
+- Rotation-equivariant anisotropic splits, accumulated multi-view refinement scores, retained
+  Adam/AMSGrad state, and exact CPU continuation through another split for all trajectory types.
 - Real-scene preflight checks for motion cache coverage and runtime/backend compatibility.
 - COLMAP text/binary camera import and rejection of unsupported distorted calibration.
 
-The CUDA test is skipped unless both CUDA and gsplat are available. Pure PyTorch rendering
+The CUDA renderer test is skipped unless both CUDA and gsplat are available; CUDA RNG
+restoration has a separate test that requires CUDA only. Pure PyTorch rendering
 uses full Gaussian support whereas CUDA uses tile culling and alpha thresholds; exact
 pixel-for-pixel backend equality is not asserted. The CUDA adapter's half-pixel convention
 is explicitly converted, but numerical GPU execution still needs verification on a GPU.
@@ -43,6 +46,24 @@ python metrics.py --data data/smoke/scene.json --checkpoint outputs/smoke/checkp
 
 Use new output directories when rerunning fixture generation or starting a new training
 run. Local generated artifacts are excluded from Git.
+
+## Refinement correctness fixes (2026-09-09)
+
+- **58 passed, 2 skipped**, 79.80 seconds, with a fresh Windows temporary directory and
+  pytest's cache plugin disabled. Skips cover CUDA rendering and CUDA RNG restoration.
+- Ruff lint, formatting of changed Python files, and Git whitespace checks passed.
+- A rotated anisotropic parent's split follows its covariance axes; both children remain
+  on the expected parent ellipsoid instead of moving along unrotated world axes.
+- With the default schedule and 25 views, refinement uses observations from all 25 views
+  even though every refinement boundary falls on view 24 (zero-based).
+- Pruning/splitting preserves unchanged Gaussian Adam/AMSGrad moments and group options;
+  split children have zero moments. All-pruned fallback respects the Gaussian capacity.
+- CPU checkpoint continuation through another split exactly matches uninterrupted state
+  for linear, spline, and ODE trajectories, including pending statistics, RNG and Adam state.
+- Legacy checkpoints still load and issue a continuity warning when missing saved state
+  would affect future refinement. Training, rendering and evaluation CLI tests also pass.
+- These are software regressions, not real-scene performance or CUDA validation. The
+  CoMoGaussian latent ODE/CMR/pixel-weighting architecture remains outside this implementation.
 
 ## Research-layout refactor (2026-09-07)
 

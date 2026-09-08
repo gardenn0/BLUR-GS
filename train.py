@@ -3,6 +3,7 @@
 import json
 from dataclasses import asdict
 from pathlib import Path
+import warnings
 
 import torch
 from torch import nn
@@ -67,6 +68,33 @@ class Trainer:
         self.times = torch.linspace(0, 1, config.exposure_samples, device=config.device)
         self.initialization_notes = []
         self.refinement_events = []
+        self._reset_refinement_stats()
+
+    def _reset_refinement_stats(self):
+        self.refinement_gradient_sum = self.scene.means.new_zeros(len(self.scene.means))
+        self.refinement_gradient_count = torch.zeros(
+            len(self.scene.means), device=self.scene.means.device, dtype=torch.long
+        )
+
+    @torch.no_grad()
+    def accumulate_refinement_stats(self, step: int, phase: str):
+        """Accumulate pre-clipping world-space gradient norms between refinement checks.
+
+        Nonzero finite gradients are the observation proxy for this renderer API;
+        invisible/zero-gradient views do not dilute a Gaussian's average score.
+        """
+        if (
+            phase == "trajectory"
+            or self.config.densify_every == 0
+            or step + 1 > self.config.densify_until
+        ):
+            return
+        gradient = self.scene.means.grad
+        if gradient is not None:
+            score = torch.linalg.vector_norm(gradient, dim=-1)
+            observed = torch.isfinite(score) & (score > 0)
+            self.refinement_gradient_sum += torch.where(observed, score, 0)
+            self.refinement_gradient_count += observed.long()
 
     def _make_scene_optimizer(self):
         config = self.config
@@ -92,13 +120,17 @@ class Trainer:
             or (step + 1) % config.densify_every
         ):
             return None
-        gradient = self.scene.means.grad
-        if gradient is None:
-            return None
-        score = torch.linalg.vector_norm(gradient, dim=-1)
+        score = self.refinement_gradient_sum / self.refinement_gradient_count.clamp_min(1)
         keep = self.scene.opacities >= config.prune_opacity_threshold
+        if not keep.any():
+            keep[self.scene.opacities.argmax()] = True
         capacity = max(0, config.max_gaussians - int(keep.sum()))
-        candidates = keep & torch.isfinite(score) & (score >= config.densify_grad_threshold)
+        candidates = (
+            keep
+            & (self.refinement_gradient_count > 0)
+            & torch.isfinite(score)
+            & (score >= config.densify_grad_threshold)
+        )
         selected = candidates.nonzero(as_tuple=False).squeeze(1)
         if len(selected) > capacity:
             selected = (
@@ -109,10 +141,13 @@ class Trainer:
         clone = torch.zeros_like(keep)
         clone[selected] = True
         if keep.all() and not clone.any():
+            self._reset_refinement_stats()
             return None
-        event = self.scene.refine(clone, keep, config.densify_jitter)
+        event = self.scene.refine(
+            clone, keep, config.densify_jitter, optimizer=self.scene_optimizer
+        )
         event["step"] = step + 1
-        self.scene_optimizer = self._make_scene_optimizer()
+        self._reset_refinement_stats()
         self.refinement_events.append(event)
         return event
 
@@ -193,6 +228,7 @@ class Trainer:
         if not torch.isfinite(losses["total"]):
             raise FloatingPointError(f"Non-finite loss at step {step}")
         losses["total"].backward()
+        self.accumulate_refinement_stats(step, phase)
         parameters = [
             p
             for p in list(self.scene.parameters()) + list(self.trajectories.parameters())
@@ -227,6 +263,17 @@ class Trainer:
             "scene_optimizer": self.scene_optimizer.state_dict(),
             "trajectory_optimizer": self.trajectory_optimizer.state_dict(),
             "refinement_events": self.refinement_events,
+            "initialization_notes": self.initialization_notes,
+            "refinement_stats": {
+                "gradient_sum": self.refinement_gradient_sum,
+                "gradient_count": self.refinement_gradient_count,
+            },
+            "rng_state": {
+                "cpu": torch.get_rng_state(),
+                "cuda": torch.cuda.get_rng_state(self.config.device)
+                if torch.device(self.config.device).type == "cuda"
+                else None,
+            },
         }
         torch.save(checkpoint, path)
 
@@ -259,6 +306,34 @@ class Trainer:
         self.scene_optimizer.load_state_dict(checkpoint["scene_optimizer"])
         self.trajectory_optimizer.load_state_dict(checkpoint["trajectory_optimizer"])
         self.refinement_events = checkpoint.get("refinement_events", [])
+        self.initialization_notes = checkpoint.get("initialization_notes", [])
+        self._reset_refinement_stats()
+        stats = checkpoint.get("refinement_stats")
+        if stats is not None:
+            for key, destination in (
+                ("gradient_sum", self.refinement_gradient_sum),
+                ("gradient_count", self.refinement_gradient_count),
+            ):
+                if stats[key].shape != destination.shape:
+                    raise ValueError("Checkpoint refinement statistics must match Gaussian count")
+                destination.copy_(stats[key])
+        rng = checkpoint.get("rng_state")
+        if rng is not None:
+            # map_location may have moved RNG ByteTensors to CUDA; these APIs expect CPU state.
+            torch.set_rng_state(rng["cpu"].cpu())
+            if torch.device(self.config.device).type == "cuda" and rng.get("cuda") is not None:
+                torch.cuda.set_rng_state(rng["cuda"].cpu(), self.config.device)
+        if (
+            (rng is None or stats is None)
+            and self.config.densify_every > 0
+            and checkpoint["step"] < self.config.densify_until
+        ):
+            warnings.warn(
+                "Legacy checkpoint lacks refinement/RNG state; loading succeeds, but future "
+                "splits cannot exactly reproduce uninterrupted training.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         return int(checkpoint["step"])
 
 
