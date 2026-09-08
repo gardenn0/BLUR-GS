@@ -20,6 +20,7 @@ from utils.image_utils import save_image
 from utils.pose_utils import exposure_path, solve_camera_motion
 from utils.loss_utils import rgb_loss
 from utils.motion_loss_utils import motion_loss
+from utils.training_monitor import TrainingMonitor
 from gaussian_renderer import make_renderer
 from gaussian_renderer.blur_renderer import render_blur
 from scene.gaussian_model import GaussianScene
@@ -288,7 +289,17 @@ class Trainer:
         if checkpoint["frame_names"] != [f.name for f in self.frames]:
             raise ValueError("Resume requires the same training frames in the same order")
         previous = asdict(TrainConfig(**checkpoint["config"]))
-        allowed = {"iterations", "log_every", "checkpoint_every", "device"}
+        allowed = {
+            "iterations",
+            "log_every",
+            "checkpoint_every",
+            "device",
+            "eval",
+            "eval_every",
+            "test_iterations",
+            "tensorboard",
+            "eval_test_images_as_sharp",
+        }
         for key, value in asdict(self.config).items():
             if key not in allowed and previous[key] != value:
                 raise ValueError(
@@ -343,6 +354,8 @@ def train(manifest: str, config: TrainConfig, output: str, resume: str | None = 
         raise FileExistsError(
             f"Output directory is not empty: {directory}; use a new run or --resume"
         )
+    config.validate()
+    monitor = TrainingMonitor(manifest, config)
     trainer = Trainer(manifest, config)
     start = trainer.resume(resume) if resume else 0
     if start >= config.iterations:
@@ -353,18 +366,25 @@ def train(manifest: str, config: TrainConfig, output: str, resume: str | None = 
     (directory / "config.json").write_text(
         json.dumps(asdict(config), indent=2) + "\n", encoding="utf-8"
     )
-    with (directory / "metrics.jsonl").open("a" if resume else "w", encoding="utf-8") as stream:
+    with (
+        monitor.start(directory, start),
+        (directory / "metrics.jsonl").open("a" if resume else "w", encoding="utf-8") as stream,
+    ):
         for step in range(start, config.iterations):
             # Every view receives both trajectory and geometry updates each cycle.
             cycle = config.trajectory_steps + config.geometry_steps
             index = ((step // cycle) if step < config.joint_start else step) % len(trainer.frames)
             metrics = trainer.step(index, step)
             stream.write(json.dumps(metrics) + "\n")
-            if (step + 1) % config.log_every == 0 or step == start:
+            if (step + 1) % config.log_every == 0 or step == start or step + 1 == config.iterations:
                 print(json.dumps(metrics), flush=True)
                 stream.flush()
+                monitor.log_train(metrics)
             if (step + 1) % config.checkpoint_every == 0:
                 trainer.save(directory / f"checkpoint_{step + 1:06d}.pt", step + 1)
+            if monitor.should_evaluate(step + 1):
+                evaluation = monitor.evaluate(trainer, step + 1)
+                print(json.dumps({"evaluation": evaluation}), flush=True)
     trainer.save(directory / "checkpoint.pt", config.iterations)
     trainer.scene.export_ply(directory / "scene.ply")
     with torch.no_grad():
@@ -399,6 +419,11 @@ def main(argv=None):
         trajectory=args.trajectory,
         ode_steps=args.ode_steps,
         acceleration_weight=args.acceleration_weight,
+        eval=args.eval,
+        eval_every=args.eval_every,
+        test_iterations=args.test_iterations,
+        tensorboard=args.tensorboard,
+        eval_test_images_as_sharp=args.eval_test_images_as_sharp,
     )
     configure_cpu_threads(config.device)
     result = train(resolve_source(args.source_path), config, args.model_path, args.resume)

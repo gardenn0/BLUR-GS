@@ -47,6 +47,11 @@ class TrainConfig:
     densify_jitter: float = 0.5
     checkpoint_every: int = 1000
     log_every: int = 50
+    eval: bool = False
+    eval_every: int = 0
+    test_iterations: list[int] | None = None
+    tensorboard: bool | None = None
+    eval_test_images_as_sharp: bool = False
     seed: int = 42
 
     def validate(self):
@@ -58,6 +63,13 @@ class TrainConfig:
             raise ValueError("Both alternating phases need at least one step")
         if self.log_every < 1 or self.checkpoint_every < 1 or self.gradient_clip <= 0:
             raise ValueError("Logging/checkpoint intervals and gradient_clip must be positive")
+        if self.eval_every < 0:
+            raise ValueError("eval_every must be nonnegative (0 disables evaluation)")
+        if self.test_iterations is not None and (
+            not self.test_iterations
+            or any(type(step) is not int or step < 1 for step in self.test_iterations)
+        ):
+            raise ValueError("test_iterations requires a nonempty list of positive integer steps")
         if self.magnitude not in {"endpoint", "path"} or not 0 <= self.dssim_weight <= 1:
             raise ValueError("Invalid magnitude mode or DSSIM weight")
         if not 0 <= self.alpha_threshold <= 1 or self.joint_start < 0:
@@ -141,6 +153,35 @@ def training_parser():
         help="YAML configuration; use configs/default.yaml for CUDA or smoke.yaml for CPU",
     )
     parser.add_argument("--iterations", type=int)
+    parser.add_argument(
+        "--eval-every", type=int,
+        help="Test interval; 0 uses the --eval default or disables evaluation without --eval",
+    )
+    parser.add_argument(
+        "--test_iterations",
+        "--test-iterations",
+        type=int,
+        nargs="+",
+        help="Exact test steps (CoMoGaussian syntax); overrides the evaluation interval",
+    )
+    parser.add_argument(
+        "--eval",
+        action="store_true",
+        default=None,
+        help="Evaluate held-out test images as GT (every 1000 steps unless overridden)",
+    )
+    parser.add_argument(
+        "--tensorboard",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="TensorBoard logging; automatic when installed unless --no-tensorboard is used",
+    )
+    parser.add_argument(
+        "--eval-test-images-as-sharp",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=argparse.SUPPRESS,  # Retained for commands/configs from the earlier reporting patch.
+    )
     parser.add_argument("--resume")
     parser.add_argument("--trajectory", choices=("linear", "spline", "ode"))
     parser.add_argument("--ode-steps", type=int, help="RK4 integration steps per query time")

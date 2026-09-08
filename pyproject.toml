@@ -11,7 +11,8 @@ dependencies = ["torch>=2.6,<3", "numpy>=1.24,<3", "Pillow>=10", "PyYAML>=6"]
 
 [project.optional-dependencies]
 cuda = ["gsplat==1.5.3"]
-dev = ["pytest>=8", "ruff>=0.11"]
+logging = ["tensorboard>=2.16,<3"]
+dev = ["pytest>=8", "ruff>=0.11", "tensorboard>=2.16,<3"]
 
 [project.scripts]
 blur-gs = "blur_gs.cli:main"
