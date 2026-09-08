@@ -227,7 +227,12 @@ class Trainer:
             "scene_optimizer": self.scene_optimizer.state_dict(),
             "trajectory_optimizer": self.trajectory_optimizer.state_dict(),
             "refinement_events": self.refinement_events,
+            # Densification samples split directions. Persist the generator state so
+            # an interrupted run is numerically identical to an uninterrupted one.
+            "torch_rng_state": torch.get_rng_state(),
         }
+        if torch.cuda.is_available():
+            checkpoint["cuda_rng_state_all"] = torch.cuda.get_rng_state_all()
         torch.save(checkpoint, path)
 
     def resume(self, path: str) -> int:
@@ -259,6 +264,15 @@ class Trainer:
         self.scene_optimizer.load_state_dict(checkpoint["scene_optimizer"])
         self.trajectory_optimizer.load_state_dict(checkpoint["trajectory_optimizer"])
         self.refinement_events = checkpoint.get("refinement_events", [])
+        # Older version-2 checkpoints remain loadable, while newly written ones
+        # resume stochastic topology refinement exactly.
+        if "torch_rng_state" in checkpoint:
+            torch.set_rng_state(checkpoint["torch_rng_state"].cpu())
+        if self.config.device.startswith("cuda") and "cuda_rng_state_all" in checkpoint:
+            states = checkpoint["cuda_rng_state_all"]
+            if len(states) != torch.cuda.device_count():
+                raise ValueError("Checkpoint CUDA RNG state does not match available devices")
+            torch.cuda.set_rng_state_all(states)
         return int(checkpoint["step"])
 
 

@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 if __package__ in (None, ""):
@@ -59,6 +60,13 @@ def inspect_dataset(source: str) -> dict:
 
 
 def inspect_runtime(backend: str, device: str) -> dict:
+    match = re.match(r"^(\d+)\.(\d+)", torch.__version__)
+    if match is None or tuple(map(int, match.groups())) < (2, 6):
+        raise RuntimeError(
+            f"PyTorch {torch.__version__} is unsupported; BLUR-GS requires torch>=2.6,<3"
+        )
+    if backend == "gsplat" and not device.startswith("cuda"):
+        raise RuntimeError("gsplat requires --device cuda or cuda:N")
     cuda_requested = device.startswith("cuda") or backend == "gsplat"
     result = {
         "torch": torch.__version__,
@@ -74,21 +82,30 @@ def inspect_runtime(backend: str, device: str) -> dict:
         except ImportError as exc:
             raise RuntimeError("gsplat is missing; install the cuda extra") from exc
         result["gsplat"] = getattr(gsplat, "__version__", "unknown")
+        if result["gsplat"] != "1.5.3":
+            raise RuntimeError(
+                f"gsplat {result['gsplat']} is unsupported; install the pinned gsplat==1.5.3"
+            )
         result["gpu"] = torch.cuda.get_device_name(torch.device(device))
     return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    add_source_argument(parser)
+    add_source_argument(parser, required=False)
     parser.add_argument("--backend", choices=("torch", "gsplat"), default="gsplat")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--runtime-only",
+        action="store_true",
+        help="Check the current environment before a prepared dataset is available",
+    )
     args = parser.parse_args(argv)
-    report = {
-        "dataset": inspect_dataset(args.source_path),
-        "runtime": inspect_runtime(args.backend, args.device),
-        "status": "ready",
-    }
+    if not args.runtime_only and args.source_path is None:
+        parser.error("-s/--source_path is required unless --runtime-only is used")
+    report = {"runtime": inspect_runtime(args.backend, args.device), "status": "ready"}
+    if not args.runtime_only:
+        report["dataset"] = inspect_dataset(args.source_path)
     print(json.dumps(report, indent=2))
     return report
 

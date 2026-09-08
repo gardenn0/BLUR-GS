@@ -116,3 +116,13 @@ def test_preflight_accepts_prepared_scene(tmp_path):
     report = json.loads(result.stdout)
     assert report["status"] == "ready"
     assert report["dataset"]["frames"] == 1
+
+
+def test_preflight_can_check_conda_runtime_before_data_preparation():
+    result = run_cli(
+        "scripts/preflight.py", "--runtime-only", "--backend", "torch", "--device", "cpu"
+    )
+    report = json.loads(result.stdout)
+    assert report["status"] == "ready"
+    assert report["runtime"]["backend"] == "torch"
+    assert "dataset" not in report
