@@ -98,6 +98,13 @@ python scripts/import_colmap.py --model /path/to/undistorted/sparse --images /pa
 python scripts/prepare_motion.py --data data/my-scene/scene.json --checkpoint checkpoints/image-as-imu.pth --device cuda
 ```
 
+학습 전에 데이터 경로, 모션 캐시, 유효 confidence, PyTorch CUDA 및 gsplat 설치를
+한 번에 검사합니다. `status`가 `ready`일 때만 장시간 학습을 시작하세요.
+
+```bash
+python scripts/preflight.py -s data/my-scene --backend gsplat --device cuda
+```
+
 GPU 학습 환경에서는 CUDA 지원 PyTorch와 빌드 도구를 설치한 후 다음을 실행합니다.
 CUDA wheel은 서버의 드라이버·CUDA 환경에 맞춰 설치해야 합니다. CPU quickstart의
 PyTorch를 그대로 사용하면 GPU 학습이 되지 않습니다.
@@ -136,11 +143,11 @@ PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel vie
 - `--config` 생략 시 기존과 동일하게 CPU/PyTorch 기본 설정입니다.
   GPU는 `--config configs/default.yaml`을 명시하세요.
   `--device`, `--backend`, `--iterations`, `--exposure-samples`로 덮어쓸 수 있습니다.
-- 이전 `python -m blur_gs train|render|evaluate|synthetic|import-colmap|prepare-motion`
+- 이전 `python -m blur_gs train|render|evaluate|synthetic|import-colmap|prepare-motion|preflight`
   명령과 `blur-gs` 콘솔 명령은 새 코드로 연결됩니다. Python import 경로는
   [구조 변경 안내](docs/layout.md)를 따르세요.
-- 체크포인트 format version 2, linear 궤적, 기본 virtual pose 9개, smoke 5개,
-  렌더러와 최적화 수식은 폴더 재구성으로 변경하지 않았습니다.
+- 체크포인트 format version 2, linear 궤적을 사용합니다. 현재 기본 설정과 smoke 설정의
+  virtual pose는 모두 10개입니다.
 
 ## 구현 선택과 현재 제약
 
@@ -149,15 +156,17 @@ PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel vie
   카메라 위치가 항상 월드 좌표에서 직선을 그리거나 body velocity가 일정하다는 의미는 아닙니다.
   CoMoGaussian의 Neural ODE,
   CMR 및 학습되는 픽셀별 노출 가중치는 현재 이식하지 않았습니다.
-- 재블러링 virtual pose는 기본 **9개** (`exposure_samples: 9`), CPU smoke는 **5개**입니다.
+- 재블러링 virtual pose는 기본과 CPU smoke 모두 **10개** (`exposure_samples: 10`)입니다.
   시작과 끝을 포함해 균일하게 샘플링하며, 두 학습 endpoint와 렌더링 샘플 수는 별개입니다.
-  기본 9개는 `t = 0, 0.125, ..., 1`이고 가중치는 각각 `1/9`입니다.
-  학습 iteration마다 중간 시점 깊이를 위한 렌더링을 별도로 한 번 수행합니다.
+  시점은 `t = 0, 1/9, 2/9, ..., 1`이고 가중치는 각각 `1/10`입니다.
+  이 10개에는 `t=0.5`가 없으므로 중간 시점 깊이를 별도로 한 번 렌더링합니다.
+  기존 9-sample 체크포인트를 재개하려면 `--exposure-samples 9`로 원래 설정을 유지하세요.
 - Linear twist의 2차 시간 미분은 0이므로 acceleration loss는 정확히 0이며 기본 가중치도
   0입니다. 중간 시점 pose anchor는 계속 적용합니다. `linear_exposure`는 이 궤적 선택이
   아니라 선형 광도 공간에서 재블러링할지를 뜻하는 별도 설정입니다.
-- Gaussian 수는 고정되고 외관은 degree-zero SH입니다. densification/pruning 및
-  고차 SH는 후속 고품질 재구성 실험에서 확장할 부분입니다.
+- 외관은 degree-zero SH입니다. GPU 기본 설정에서는 위치 gradient가 큰 Gaussian을
+  분할하고 낮은 opacity Gaussian을 제거합니다. 최대 개수와 스케줄은
+  `configs/default.yaml`에서 조정할 수 있으며 `densify_every: 0`으로 끌 수 있습니다.
 - Image-as-an-IMU 공식 모델은 흐름과 깊이를 출력합니다. 신뢰도는 BLUR-GS에서 추가한
   텍스처·포화·유효영역 휴리스틱이며 학습된 confidence head가 아닙니다.
 - IAAI의 virtual-start 흐름을 중간 시점 Gaussian 깊이와 같은 3D 점에 맞춰 비교합니다.

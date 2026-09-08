@@ -13,7 +13,7 @@ class TrainConfig:
     backend: str = "torch"
     device: str = "cpu"
     iterations: int = 30000
-    exposure_samples: int = 9
+    exposure_samples: int = 10
     trajectory_steps: int = 1
     geometry_steps: int = 1
     joint_start: int = 27000
@@ -36,6 +36,13 @@ class TrainConfig:
     linear_exposure: bool = True
     initialize_motion: bool = True
     gradient_clip: float = 10.0
+    densify_from: int = 500
+    densify_until: int = 15000
+    densify_every: int = 250
+    densify_grad_threshold: float = 0.0002
+    prune_opacity_threshold: float = 0.01
+    max_gaussians: int = 500000
+    densify_jitter: float = 0.5
     checkpoint_every: int = 1000
     log_every: int = 50
     seed: int = 42
@@ -56,6 +63,16 @@ class TrainConfig:
                 key.endswith("weight") or key.endswith("lr") or key.endswith("_steps")
             ) and value < 0:
                 raise ValueError(f"{key} must be nonnegative")
+        if self.densify_every < 0 or self.max_gaussians < 1:
+            raise ValueError("densify_every must be nonnegative and max_gaussians positive")
+        if (
+            self.densify_from < 0
+            or self.densify_until < self.densify_from
+            or self.densify_jitter < 0
+            or self.densify_grad_threshold < 0
+            or not 0 <= self.prune_opacity_threshold <= 1
+        ):
+            raise ValueError("Invalid densification schedule or jitter")
         if self.device.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError("CUDA unavailable; use configs/smoke.yaml for CPU verification")
 

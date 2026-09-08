@@ -33,6 +33,7 @@ def run_cli(*args, cwd=ROOT):
         "scripts/make_synthetic.py",
         "scripts/import_colmap.py",
         "scripts/prepare_motion.py",
+        "scripts/preflight.py",
     ],
 )
 def test_direct_entrypoint_help_from_another_directory(script, tmp_path):
@@ -59,11 +60,11 @@ def test_source_resolution_and_option_aliases(tmp_path):
 
 
 def test_configuration_preserves_defaults_and_applies_overrides_before_validation():
-    assert read_config(None).exposure_samples == 9
+    assert read_config(None).exposure_samples == 10
     config = read_config(
         str(ROOT / "configs/default.yaml"), device="cpu", backend="torch", iterations=2
     )
-    assert config.exposure_samples == 9
+    assert config.exposure_samples == 10
     assert config.iterations == 2 and config.backend == "torch"
     with pytest.raises(ValueError, match="at least three"):
         read_config(None, exposure_samples=2)
@@ -98,3 +99,20 @@ def test_train_render_metrics_and_legacy_resume(tmp_path):
     )
     summary = json.loads((output / "summary.json").read_text())
     assert summary["iterations"] == 4
+
+
+def test_preflight_accepts_prepared_scene(tmp_path):
+    data = tmp_path / "data"
+    run_cli("scripts/make_synthetic.py", "--output", data, "--size", 16, "--views", 1)
+    result = run_cli(
+        "scripts/preflight.py",
+        "-s",
+        data,
+        "--backend",
+        "torch",
+        "--device",
+        "cpu",
+    )
+    report = json.loads(result.stdout)
+    assert report["status"] == "ready"
+    assert report["dataset"]["frames"] == 1

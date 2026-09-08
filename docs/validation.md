@@ -22,6 +22,8 @@ The test suite checks:
 - Static-camera reblurring equivalence and optional CUDA pose/depth gradient checks.
 - Exact freezing of the inactive parameter group, motion gradients to both groups,
   checkpoint resume continuity, depth warm-up, and decreasing RGB loss on a synthetic scene.
+- Gaussian split/prune topology changes and checkpoint resume after a changed Gaussian count.
+- Real-scene preflight checks for motion cache coverage and runtime/backend compatibility.
 - COLMAP text/binary camera import and rejection of unsupported distorted calibration.
 
 The CUDA test is skipped unless both CUDA and gsplat are available. Pure PyTorch rendering

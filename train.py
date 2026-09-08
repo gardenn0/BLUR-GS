@@ -58,7 +58,17 @@ class Trainer:
             [ExposureTrajectory(f.w2c.to(config.device)) for f in self.frames]
         )
         self.renderer = make_renderer(config.backend)
-        self.scene_optimizer = torch.optim.Adam(
+        self.scene_optimizer = self._make_scene_optimizer()
+        self.trajectory_optimizer = torch.optim.Adam(
+            self.trajectories.parameters(), lr=config.trajectory_lr
+        )
+        self.times = torch.linspace(0, 1, config.exposure_samples, device=config.device)
+        self.initialization_notes = []
+        self.refinement_events = []
+
+    def _make_scene_optimizer(self):
+        config = self.config
+        return torch.optim.Adam(
             [
                 {"params": [self.scene.means], "lr": config.position_lr},
                 {
@@ -68,11 +78,41 @@ class Trainer:
             ],
             eps=1e-15,
         )
-        self.trajectory_optimizer = torch.optim.Adam(
-            self.trajectories.parameters(), lr=config.trajectory_lr
-        )
-        self.times = torch.linspace(0, 1, config.exposure_samples, device=config.device)
-        self.initialization_notes = []
+
+    @torch.no_grad()
+    def maybe_refine_scene(self, step: int, phase: str) -> dict | None:
+        config = self.config
+        if (
+            phase == "trajectory"
+            or config.densify_every == 0
+            or step + 1 < config.densify_from
+            or step + 1 > config.densify_until
+            or (step + 1) % config.densify_every
+        ):
+            return None
+        gradient = self.scene.means.grad
+        if gradient is None:
+            return None
+        score = torch.linalg.vector_norm(gradient, dim=-1)
+        keep = self.scene.opacities >= config.prune_opacity_threshold
+        capacity = max(0, config.max_gaussians - int(keep.sum()))
+        candidates = keep & torch.isfinite(score) & (score >= config.densify_grad_threshold)
+        selected = candidates.nonzero(as_tuple=False).squeeze(1)
+        if len(selected) > capacity:
+            selected = (
+                selected[torch.topk(score[selected], capacity).indices]
+                if capacity
+                else selected[:0]
+            )
+        clone = torch.zeros_like(keep)
+        clone[selected] = True
+        if keep.all() and not clone.any():
+            return None
+        event = self.scene.refine(clone, keep, config.densify_jitter)
+        event["step"] = step + 1
+        self.scene_optimizer = self._make_scene_optimizer()
+        self.refinement_events.append(event)
+        return event
 
     @torch.no_grad()
     def initialize_motion(self):
@@ -161,11 +201,14 @@ class Trainer:
             self.scene_optimizer.step()
         if phase != "geometry":
             self.trajectory_optimizer.step()
+        refinement = self.maybe_refine_scene(step, phase)
         return {
             "step": step + 1,
             "phase": phase,
             "frame": self.frames[frame_index].name,
             **{k: float(v.detach()) for k, v in losses.items()},
+            "gaussians": len(self.scene.means),
+            "refinement": refinement,
         }
 
     def save(self, path: Path, step: int):
@@ -181,6 +224,7 @@ class Trainer:
             "manifest": self.manifest,
             "scene_optimizer": self.scene_optimizer.state_dict(),
             "trajectory_optimizer": self.trajectory_optimizer.state_dict(),
+            "refinement_events": self.refinement_events,
         }
         torch.save(checkpoint, path)
 
@@ -196,10 +240,18 @@ class Trainer:
                 raise ValueError(
                     f"Resume config changed {key}; keep optimization settings identical"
                 )
-        self.scene.load_state_dict(checkpoint["scene"])
+        state = checkpoint["scene"]
+        # A refined checkpoint can contain a different Gaussian count than the
+        # original COLMAP cloud, so reconstruct parameters before restoring Adam.
+        self.scene = GaussianScene(
+            state["means"], state["color_logits"].sigmoid(), state["log_scales"].exp()
+        ).to(self.config.device)
+        self.scene.load_state_dict(state)
+        self.scene_optimizer = self._make_scene_optimizer()
         self.trajectories.load_state_dict(checkpoint["trajectories"])
         self.scene_optimizer.load_state_dict(checkpoint["scene_optimizer"])
         self.trajectory_optimizer.load_state_dict(checkpoint["trajectory_optimizer"])
+        self.refinement_events = checkpoint.get("refinement_events", [])
         return int(checkpoint["step"])
 
 
@@ -246,6 +298,7 @@ def train(manifest: str, config: TrainConfig, output: str, resume: str | None = 
         "iterations": config.iterations,
         "final_step_metrics": metrics,
         "initialization_notes": trainer.initialization_notes,
+        "refinement_events": trainer.refinement_events,
         "backend": config.backend,
         "gaussians": len(trainer.scene.means),
     }

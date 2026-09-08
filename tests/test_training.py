@@ -86,10 +86,10 @@ def test_default_virtual_pose_count_is_independent_of_two_controls(tmp_path):
     trainer = Trainer(str(manifest), TrainConfig())
     trajectory = trainer.trajectories[0]
     trajectory.initialize_from_camera_motion(torch.tensor([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]))
-    assert trainer.config.exposure_samples == 9
-    torch.testing.assert_close(trainer.times, torch.arange(9) / 8)
+    assert trainer.config.exposure_samples == 10
+    torch.testing.assert_close(trainer.times, torch.arange(10) / 9)
     assert trajectory.controls.shape == (2, 6)
-    assert trajectory(trainer.times).shape == (9, 4, 4)
+    assert trajectory(trainer.times).shape == (10, 4, 4)
     calls = []
     renderer = trainer.renderer
 
@@ -99,6 +99,34 @@ def test_default_virtual_pose_count_is_independent_of_two_controls(tmp_path):
 
     trainer.renderer = recording_renderer
     trainer.objective(0, 0, "joint")
-    # One midpoint depth pass plus nine exposure renders, with no change to sample count.
-    assert len(calls) == 10
+    # Ten exposure renders plus a separate midpoint depth pass (not an exposure sample).
+    assert len(calls) == 11
     torch.testing.assert_close(torch.stack(calls[1:]), trajectory(trainer.times))
+
+
+def test_scene_refinement_changes_topology_and_resume_accepts_it(tmp_path):
+    manifest = make_synthetic(tmp_path / "data", size=16, views=1)
+    config = TrainConfig(
+        iterations=4,
+        exposure_samples=3,
+        joint_start=0,
+        depth_warmup_steps=0,
+        motion_ramp_steps=1,
+        densify_from=1,
+        densify_until=1,
+        densify_every=1,
+        densify_grad_threshold=0,
+        prune_opacity_threshold=0,
+        max_gaussians=30,
+    )
+    trainer = Trainer(str(manifest), config)
+    before = len(trainer.scene.means)
+    result = trainer.step(0, 0)
+    assert before < result["gaussians"] <= config.max_gaussians
+    assert result["refinement"]["cloned"] > 0
+    checkpoint = tmp_path / "refined.pt"
+    trainer.save(checkpoint, 1)
+    resumed = Trainer(str(manifest), config)
+    assert resumed.resume(str(checkpoint)) == 1
+    assert len(resumed.scene.means) == result["gaussians"]
+    resumed.step(0, 1)

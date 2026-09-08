@@ -8,7 +8,7 @@ additional claims made by these papers.
 
 | BLUR-GS specification | Implementation | Status |
 | --- | --- | --- |
-| Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.gaussian_model.GaussianScene` | Anisotropic Gaussian scene, DC appearance; fixed point count |
+| Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.gaussian_model.GaussianScene` | Anisotropic Gaussian scene, DC appearance; configurable gradient-based split/prune |
 | Eqs. 13-15 continuous SE(3) trajectory | `scene.trajectory.ExposureTrajectory`, `utils.pose_utils.se3_exp` | Linear in Lie algebra, two 6D endpoint controls per image |
 | Eqs. 17-20 exposure integration and L1/DSSIM | `gaussian_renderer.blur_renderer.render_blur`, `utils.loss_utils.rgb_loss` | Uniform temporal samples by default; optional weights in renderer API |
 | Eqs. 21-23 fixed observed motion | `scene.motion_prior.ImageAsIMU`, `prepare_motion` | Official network adapter; locally defined confidence heuristic |
@@ -45,9 +45,9 @@ when the endpoint twists do not commute. Twist acceleration is exactly zero; its
 reported as zero and disabled by default. The midpoint remains trainable with a pose anchor.
 
 Virtual render poses are sampled independently of the number of learned endpoints. Default
-`exposure_samples=9` yields times `0, 1/8, ..., 1`, each weighted `1/9`; the smoke config uses
-5 samples. Each objective additionally performs one midpoint depth render (the midpoint is
-already among the nine default exposure poses). `linear_exposure` controls radiometric
+`exposure_samples=10` yields times `0, 1/9, ..., 1`, each weighted `1/10`; the smoke config also
+uses 10 samples. Each objective additionally performs one midpoint depth render at t=0.5,
+which is not among these ten exposure poses. `linear_exposure` controls radiometric
 integration in linear light and is unrelated to the trajectory parameterization.
 
 New checkpoints carry `format_version=2` and `trajectory_model=linear_se3`. Resume rejects
@@ -127,10 +127,11 @@ comparisons. No external repository source has been vendored here.
 
 ## Experimental limitations
 
-This version has no Gaussian densification/pruning, high-order SH, multi-scale training,
-rolling-shutter model, dynamic-object mask, or learned shutter weights. It can optimize an
-existing point set end-to-end, but those limitations matter for large-scene reconstruction
-quality. PyTorch rendering is an O(NHW) correctness backend with no tile culling; gsplat
+This version has gradient-based Gaussian splitting and opacity pruning, but no high-order SH,
+multi-scale training, rolling-shutter model, dynamic-object mask, or learned shutter weights.
+The topology refinement intentionally uses a simple optimizer restart after each event rather
+than reproducing the full 3DGS adaptive-density schedule. PyTorch rendering is an O(NHW)
+correctness backend with no tile culling; gsplat
 is the intended GPU backend. Startup scale estimation is chunked O(N^2) nearest-neighbor
 distance unless input scales are supplied. COLMAP import caps initial points at 10,000 by
 default. There is no claimed real-scene benchmark reproduction in this release.

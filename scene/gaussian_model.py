@@ -58,6 +58,57 @@ class GaussianScene(nn.Module):
         RS = R * self.scales[:, None, :]
         return RS @ RS.transpose(-1, -2)
 
+    @torch.no_grad()
+    def refine(
+        self,
+        clone_mask: Tensor,
+        keep_mask: Tensor,
+        jitter: float = 0.5,
+    ) -> dict[str, int]:
+        """Prune weak Gaussians and split selected survivors into two children.
+
+        The split preserves the parent's appearance and approximately preserves its
+        opacity mass while shrinking each child. Optimizers must be rebuilt after this
+        method because the Parameter objects change shape.
+        """
+        n = len(self.means)
+        if clone_mask.shape != (n,) or keep_mask.shape != (n,):
+            raise ValueError("refinement masks must match the Gaussian count")
+        keep_mask = keep_mask.bool()
+        if not keep_mask.any():
+            keep_mask[self.opacities.argmax()] = True
+        clone_mask = clone_mask.bool() & keep_mask
+        kept = keep_mask.nonzero(as_tuple=False).squeeze(1)
+        cloned = clone_mask.nonzero(as_tuple=False).squeeze(1)
+
+        means = self.means[kept]
+        log_scales = self.log_scales[kept]
+        quats = self.quats[kept]
+        opacity_logits = self.opacity_logits[kept]
+        color_logits = self.color_logits[kept]
+        if len(cloned):
+            directions = torch.randn_like(self.means[cloned])
+            directions = torch.nn.functional.normalize(directions, dim=-1, eps=1e-8)
+            offsets = directions * self.scales[cloned] * jitter
+            means = torch.cat((means, self.means[cloned] + offsets), 0)
+            child_scales = self.log_scales[cloned] - torch.log(self.means.new_tensor(1.6))
+            log_scales = torch.cat((log_scales, child_scales), 0)
+            quats = torch.cat((quats, self.quats[cloned]), 0)
+            child_opacity = (self.opacities[cloned] * 0.5).clamp(1e-6, 1 - 1e-6)
+            opacity_logits = torch.cat((opacity_logits, torch.logit(child_opacity)), 0)
+            color_logits = torch.cat((color_logits, self.color_logits[cloned]), 0)
+            parent_positions = torch.searchsorted(kept, cloned)
+            means[parent_positions] = self.means[cloned] - offsets
+            opacity_logits[parent_positions] = torch.logit(child_opacity)
+            log_scales[parent_positions] = child_scales
+
+        self.means = nn.Parameter(means)
+        self.log_scales = nn.Parameter(log_scales)
+        self.quats = nn.Parameter(quats)
+        self.opacity_logits = nn.Parameter(opacity_logits)
+        self.color_logits = nn.Parameter(color_logits)
+        return {"before": n, "pruned": n - len(kept), "cloned": len(cloned), "after": len(means)}
+
     def export_ply(self, path: str | Path) -> None:
         """3DGS PLY convention: raw log-scales/logit opacity, wxyz, degree-zero SH."""
         path = Path(path)

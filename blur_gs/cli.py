@@ -13,6 +13,7 @@ def main(argv=None):
         "synthetic": "scripts.make_synthetic",
         "import-colmap": "scripts.import_colmap",
         "prepare-motion": "scripts.prepare_motion",
+        "preflight": "scripts.preflight",
     }
     parser = argparse.ArgumentParser(description="BLUR-GS legacy command dispatcher")
     parser.add_argument("command", choices=commands)

@@ -2,8 +2,8 @@
 backend: gsplat
 device: cuda
 iterations: 30000
-# Render nine virtual poses including both exposure endpoints (two learned endpoint twists).
-exposure_samples: 9
+# Render ten virtual poses including both exposure endpoints (two learned endpoint twists).
+exposure_samples: 10
 trajectory_steps: 1
 geometry_steps: 1
 joint_start: 27000
@@ -28,6 +28,14 @@ alpha_threshold: 0.1
 linear_exposure: true
 initialize_motion: true
 gradient_clip: 10.0
+# Real-scene 3DGS topology refinement. Set densify_every: 0 to disable.
+densify_from: 500
+densify_until: 15000
+densify_every: 250
+densify_grad_threshold: 0.0002
+prune_opacity_threshold: 0.01
+max_gaussians: 500000
+densify_jitter: 0.5
 checkpoint_every: 1000
 log_every: 50
 seed: 42
