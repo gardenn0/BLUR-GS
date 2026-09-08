@@ -9,14 +9,14 @@ additional claims made by these papers.
 | BLUR-GS specification | Implementation | Status |
 | --- | --- | --- |
 | Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.gaussian_model.GaussianScene` | Anisotropic Gaussian scene, DC appearance; configurable gradient-based split/prune |
-| Eqs. 13-15 continuous SE(3) trajectory | `scene.trajectory.ExposureTrajectory`, `utils.pose_utils.se3_exp` | Linear in Lie algebra, two 6D endpoint controls per image |
+| Eqs. 13-15 continuous SE(3) trajectory | `scene.trajectory.make_trajectory`, `utils.pose_utils.se3_exp` | CLI-selectable linear, clamped cubic spline, or Neural ODE in Lie algebra |
 | Eqs. 17-20 exposure integration and L1/DSSIM | `gaussian_renderer.blur_renderer.render_blur`, `utils.loss_utils.rgb_loss` | Uniform temporal samples by default; optional weights in renderer API |
 | Eqs. 21-23 fixed observed motion | `scene.motion_prior.ImageAsIMU`, `prepare_motion` | Official network adapter; locally defined confidence heuristic |
 | Eqs. 24-28 Gaussian z-depth and backprojection | Both renderers, `utils.pose_utils.backproject` | Alpha-normalized expected z-depth, midpoint reference |
 | Eqs. 29-34 predicted exposure motion | `utils.pose_utils.exposure_path` | Exact pinhole reprojection along the continuous pose samples |
 | Eqs. 35-37 small-motion geometry | `utils.pose_utils.motion_jacobian`, `solve_camera_motion` | fx/fy-aware camera-motion Jacobian, weighted damped least squares |
 | Eqs. 38-44 robust flow, magnitude, direction | `utils.motion_loss_utils.motion_loss` | Confidence-normalized Charbonnier; endpoint magnitude default |
-| Eqs. 45-47 smoothness and anchor | `ExposureTrajectory.regularizers` | Twist acceleration analytically zero; local midpoint twist norm retained |
+| Eqs. 45-47 smoothness and anchor | Trajectory `regularizers()` | Zero linear acceleration, exact integrated spline acceleration, finite-difference ODE acceleration; midpoint twist anchor |
 | Eqs. 49-50 depth warm-up | `train.mix_depth` | Optional registered initial depth; gradually fully GS-derived |
 | Eqs. 52-56, Algorithm 1 alternating optimization | `train.Trainer.step` | Explicit parameter freezing, two optimizers, reduced-LR joint stage |
 | Sec. 1.14 variable-specific translation/rotation routing | General Jacobian available | Specialized separate observed component losses not enabled |
@@ -37,7 +37,7 @@ and `X_t = T(t) @ inverse(T_ref) @ X_ref` make Eq. 29 internally consistent. The
 instead maps camera body displacement to image displacement; its sign and coordinate
 frame are converted with the SE(3) adjoint when initializing right-composed controls.
 
-The current user-selected trajectory is linear in the shared reference Lie algebra:
+The default trajectory is linear in the shared reference Lie algebra:
 `xi(t) = (1-t) xi_start + t xi_end`. There are two learned 6D endpoint controls per image.
 SE(3) matrices are produced by the exponential, rather than elementwise matrix interpolation.
 This is not a guarantee of a world-space straight camera-center path or constant body velocity
@@ -50,10 +50,18 @@ uses 10 samples. Each objective additionally performs one midpoint depth render 
 which is not among these ten exposure poses. `linear_exposure` controls radiometric
 integration in linear light and is unrelated to the trajectory parameterization.
 
-New checkpoints carry `format_version=2` and `trajectory_model=linear_se3`. Resume rejects
+Linear checkpoints carry `format_version=2` and `trajectory_model=linear_se3`. Resume rejects
 older four-control Bezier optimizer state with a clear error. Rendering can still recover
 the exact midpoint of legacy version-1 trajectories using their cubic midpoint weights;
 it does not reinterpret their saved trajectories as linear.
+
+`--trajectory spline` selects a clamped single-segment cubic B-spline (four twist controls,
+equivalent to a cubic Bezier basis). `--trajectory ode` selects a per-image Neural ODE with
+trainable initial twist and velocity plus a 7-32-6 tanh MLP vector field. Fixed-step RK4
+integrates from zero to each query independently; `--ode-steps` controls integration accuracy.
+Both nonlinear models use checkpoint version 3, including model/config metadata for rendering.
+Resume rejects model switches. These are BLUR-GS parameterizations, not CoMoGaussian reproduction.
+The default acceleration weight remains zero; enable it explicitly for nonlinear experiments.
 
 The [gsplat CUDA rasterizer](https://github.com/nerfstudio-project/gsplat/blob/v1.5.3/gsplat/cuda/csrc/RasterizeToPixels3DGSFwd.cu)
 evaluates at half-integer centers. Its adapter adds 0.5 to principal points. COLMAP import

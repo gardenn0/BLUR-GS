@@ -14,6 +14,8 @@ class TrainConfig:
     device: str = "cpu"
     iterations: int = 30000
     exposure_samples: int = 10
+    trajectory: str = "linear"
+    ode_steps: int = 16
     trajectory_steps: int = 1
     geometry_steps: int = 1
     joint_start: int = 27000
@@ -48,6 +50,8 @@ class TrainConfig:
     seed: int = 42
 
     def validate(self):
+        if self.trajectory not in {"linear", "spline", "ode"} or self.ode_steps < 1:
+            raise ValueError("Invalid trajectory or ode_steps")
         if self.iterations <= 0 or self.exposure_samples < 3:
             raise ValueError("Positive iterations and at least three exposure samples are required")
         if self.trajectory_steps < 1 or self.geometry_steps < 1:
@@ -121,7 +125,7 @@ def configure_cpu_threads(device):
 
 
 def training_parser():
-    parser = argparse.ArgumentParser(description="Train BLUR-GS geometry and linear trajectories")
+    parser = argparse.ArgumentParser(description="Train BLUR-GS geometry and exposure trajectories")
     add_source_argument(parser)
     parser.add_argument(
         "-m",
@@ -138,6 +142,9 @@ def training_parser():
     )
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--resume")
+    parser.add_argument("--trajectory", choices=("linear", "spline", "ode"))
+    parser.add_argument("--ode-steps", type=int, help="RK4 integration steps per query time")
+    parser.add_argument("--acceleration-weight", type=float, help="Twist acceleration penalty")
     parser.add_argument("--device", help="Override config device, e.g. cpu or cuda:0")
     parser.add_argument("--backend", choices=("torch", "gsplat"))
     parser.add_argument("--exposure-samples", "--exposure_samples", type=int)

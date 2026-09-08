@@ -151,7 +151,35 @@ PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel vie
 
 ## 구현 선택과 현재 제약
 
-- 두 6D endpoint twist를 `xi(t) = (1-t) xi_start + t xi_end`로 선형 보간하고,
+### 궤적 선택
+
+`train.py --trajectory linear|spline|ode`로 노출 궤적을 선택합니다. 모든 방식의 기본
+virtual pose 수는 10개이며 `--exposure-samples`로 독립적으로 바꿀 수 있습니다.
+
+```bash
+python train.py -s data/my-scene -m outputs/linear --config configs/default.yaml --trajectory linear
+python train.py -s data/my-scene -m outputs/spline --config configs/default.yaml --trajectory spline --acceleration-weight 0.01
+python train.py -s data/my-scene -m outputs/ode --config configs/default.yaml --trajectory ode --ode-steps 16 --acceleration-weight 0.01
+```
+
+- `linear`: 두 endpoint twist의 선형 보간. 기존 기본값입니다.
+- `spline`: 4개 twist 제어점의 clamped cubic B-spline. knot vector는
+  `[0,0,0,0,1,1,1,1]`로, 단일 cubic Bezier 구간과 같습니다. 가속도 손실은 해석적으로 적분합니다.
+- `ode`: 이미지마다 초기 twist, 기본 속도와 `7 → 32 → 6` tanh MLP를 학습합니다.
+  `dξ/dt = velocity + MLP(t, ξ)`를 고정 step RK4로 적분합니다. `--ode-steps`는
+  각 query time까지의 적분 step 수이며 virtual pose 수와 다릅니다. 가속도 손실은
+  9개 정규화 시점의 유한차분 근사입니다. CoMoGaussian 전체 구조의 재현은 아닙니다.
+
+비선형 예제의 `0.01`은 실험용 시작값이며 검증된 최적값은 아닙니다. 생략하면 기존
+`acceleration_weight: 0.0`을 유지합니다. IAAI flow는 endpoint 관측이므로 비선형
+궤적에서도 `magnitude: endpoint`를 유지하세요.
+
+Linear 체크포인트는 version 2를 유지하고 spline/ODE는 version 3으로 저장합니다.
+`render.py`는 체크포인트에서 궤적 종류를 자동 복원합니다. 재개할 때에는 학습 때와
+동일한 `--trajectory`, `--ode-steps`, 손실 설정을 전달해야 합니다. 궤적 종류를 바꾸는
+실험은 별도 출력 폴더에서 새 학습으로 시작하세요.
+
+- 기본 linear 방식은 두 6D endpoint twist를 `xi(t) = (1-t) xi_start + t xi_end`로 선형 보간하고,
   `T(t) = T0 @ exp(xi(t))`로 SE(3) pose를 생성합니다. 보간은 Lie algebra 기준이며,
   카메라 위치가 항상 월드 좌표에서 직선을 그리거나 body velocity가 일정하다는 의미는 아닙니다.
   CoMoGaussian의 Neural ODE,

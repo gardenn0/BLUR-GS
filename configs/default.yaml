@@ -4,6 +4,8 @@ device: cuda
 iterations: 30000
 # Render ten virtual poses including both exposure endpoints (two learned endpoint twists).
 exposure_samples: 10
+trajectory: linear
+ode_steps: 16
 trajectory_steps: 1
 geometry_steps: 1
 joint_start: 27000

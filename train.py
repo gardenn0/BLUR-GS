@@ -24,8 +24,7 @@ from gaussian_renderer.blur_renderer import render_blur
 from scene.gaussian_model import GaussianScene
 from scene.trajectory import (
     CHECKPOINT_VERSION,
-    TRAJECTORY_MODEL,
-    ExposureTrajectory,
+    make_trajectory,
     require_linear_checkpoint,
 )
 
@@ -55,7 +54,10 @@ class Trainer:
         self.frames, cloud = load_dataset(manifest)
         self.scene = GaussianScene(**{k: v.to(config.device) for k, v in cloud.items()})
         self.trajectories = nn.ModuleList(
-            [ExposureTrajectory(f.w2c.to(config.device)) for f in self.frames]
+            [
+                make_trajectory(f.w2c.to(config.device), config.trajectory, config.ode_steps)
+                for f in self.frames
+            ]
         )
         self.renderer = make_renderer(config.backend)
         self.scene_optimizer = self._make_scene_optimizer()
@@ -214,8 +216,8 @@ class Trainer:
     def save(self, path: Path, step: int):
         path.parent.mkdir(parents=True, exist_ok=True)
         checkpoint = {
-            "format_version": CHECKPOINT_VERSION,
-            "trajectory_model": TRAJECTORY_MODEL,
+            "format_version": CHECKPOINT_VERSION if self.config.trajectory == "linear" else 3,
+            "trajectory_model": self.trajectories[0].model_name,
             "step": step,
             "config": asdict(self.config),
             "scene": self.scene.state_dict(),
@@ -230,10 +232,15 @@ class Trainer:
 
     def resume(self, path: str) -> int:
         checkpoint = torch.load(path, map_location=self.config.device, weights_only=True)
-        require_linear_checkpoint(checkpoint)
+        if checkpoint.get("format_version") != 3:
+            require_linear_checkpoint(checkpoint)
+        if checkpoint.get("trajectory_model") != self.trajectories[0].model_name:
+            raise ValueError(
+                "Resume requires the same trajectory model; start a new run to change it"
+            )
         if checkpoint["frame_names"] != [f.name for f in self.frames]:
             raise ValueError("Resume requires the same training frames in the same order")
-        previous = checkpoint["config"]
+        previous = asdict(TrainConfig(**checkpoint["config"]))
         allowed = {"iterations", "log_every", "checkpoint_every", "device"}
         for key, value in asdict(self.config).items():
             if key not in allowed and previous[key] != value:
@@ -293,7 +300,7 @@ def train(manifest: str, config: TrainConfig, output: str, resume: str | None = 
             )
             save_image(directory / "sharp" / f"{i:06d}.png", rendered.rgb)
     summary = {
-        "trajectory_model": TRAJECTORY_MODEL,
+        "trajectory_model": trainer.trajectories[0].model_name,
         "exposure_samples": config.exposure_samples,
         "iterations": config.iterations,
         "final_step_metrics": metrics,
@@ -314,6 +321,9 @@ def main(argv=None):
         device=args.device,
         backend=args.backend,
         exposure_samples=args.exposure_samples,
+        trajectory=args.trajectory,
+        ode_steps=args.ode_steps,
+        acceleration_weight=args.acceleration_weight,
     )
     configure_cpu_threads(config.device)
     result = train(resolve_source(args.source_path), config, args.model_path, args.resume)
