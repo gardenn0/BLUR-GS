@@ -76,12 +76,73 @@ python -m ruff check .
 ```
 
 Windows PowerShell에서는 활성화 대신 `.\.venv\Scripts\python.exe`로 위의 `python`을
-바꿔 실행할 수 있습니다. 현재 작업 폴더에는 이 가상환경이 설치되어 있습니다.
+바꿔 실행할 수 있습니다. 가상환경과 의존성은 clone에 포함되지 않으므로 각 머신에서
+직접 생성하고 설치해야 합니다.
 
 합성 데이터의 흐름은 **알려진 3D 장면으로 계산한 정답**입니다. 이 smoke 테스트는
 Image-as-an-IMU 추론이나 실제 데이터셋 성능 실험이 아닙니다.
 
 ## 실제 데이터 학습
+
+### clone 직후 `train.py`를 실행할 수 있는 조건
+
+**코드는 학습 가능한 BLUR-GS basic 구현이지만, 저장소를 clone한 것만으로 실제 장면
+학습 준비가 끝나는 것은 아닙니다.** `train.py`는 raw 이미지 폴더나 raw COLMAP 모델을
+직접 전처리하지 않으며, Image-as-an-IMU 가중치도 저장소에 포함하지 않습니다. 다음
+조건을 모두 만족해야 실제 데이터 학습을 시작할 수 있습니다.
+
+1. CUDA를 지원하는 PyTorch와 `gsplat==1.5.3`을 설치합니다.
+2. 왜곡 보정된 COLMAP 카메라와 sparse point cloud를 `scripts/import_colmap.py`로
+   BLUR-GS manifest로 변환합니다.
+3. 공식 Image-as-an-IMU 패키지와 pretrained checkpoint를 별도로 준비한 뒤
+   `scripts/prepare_motion.py`로 각 train frame의 고정 flow/depth cache를 만듭니다.
+4. `scripts/preflight.py`가 `"status": "ready"`를 출력하는지 확인합니다.
+5. 그 후 `python train.py ...`를 실행합니다.
+
+```bash
+git clone <this-repository-url> blur-3dgs
+cd blur-3dgs
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[cuda,dev]'
+
+python scripts/import_colmap.py --model /path/to/undistorted/sparse --images /path/to/undistorted/images --output data/my-scene --downscale 4
+python scripts/prepare_motion.py --data data/my-scene/scene.json --checkpoint checkpoints/image-as-imu.pth --device cuda
+python scripts/preflight.py -s data/my-scene --backend gsplat --device cuda
+python train.py -s data/my-scene -m outputs/my-scene --config configs/default.yaml
+```
+
+위 명령이 실행된다는 것은 구현의 학습 경로가 동작한다는 뜻입니다. 논문과 같은 정량
+성능을 보장하려면 논문에서 사용한 데이터 분할, 공식 모션 checkpoint, 카메라 보정,
+GPU rasterizer 및 별도의 하이퍼파라미터/benchmark 검증이 필요합니다. 공식 checkpoint
+없이 합성 cache로 실행한 CPU smoke test는 설치와 미분 경로만 검증합니다.
+
+### 기존 CoMoGaussian conda 환경을 재사용하는 경우
+
+환경을 그대로 사용할 수 있는지는 이름이 아니라 설치된 버전으로 결정됩니다. 먼저 환경을
+활성화한 뒤, 데이터 없이 runtime 검사만 실행하세요.
+
+```bash
+conda activate <comogaussian-env>
+python scripts/preflight.py --runtime-only --backend gsplat --device cuda
+```
+
+이 검사는 이 저장소가 요구하는 `torch>=2.6,<3`, CUDA 사용 가능 여부, 정확히
+`gsplat==1.5.3`, 그리고 GPU 접근을 확인합니다. 기존 CoMoGaussian 환경에 다른 PyTorch나
+자체 CUDA rasterizer가 설치되어 있다는 사실만으로 이 구현과 호환되지는 않습니다.
+검사가 실패하면 기존 환경을 덮어써 CoMoGaussian을 깨뜨리기보다는 복제하는 편이 안전합니다.
+
+```bash
+conda create --name blur-gs --clone <comogaussian-env>
+conda activate blur-gs
+# 머신의 CUDA driver에 맞는 PyTorch wheel을 설치한 다음:
+python -m pip install -e '.[cuda,dev]'
+python scripts/preflight.py --runtime-only --backend gsplat --device cuda
+```
+
+`status: ready`이면 같은 환경에서 위의 데이터 preflight와 `train.py` 명령을 진행할 수
+있습니다. 이 프로젝트는 CoMoGaussian 환경의 기존 custom rasterizer를 자동으로 사용하지
+않고, 별도로 고정한 `gsplat` backend를 사용합니다.
 
 먼저 이미지와 COLMAP 카메라·희소 점군을 준비합니다. 왜곡 보정된 PINHOLE 또는
 SIMPLE_PINHOLE 모델만 지원합니다. 원본 카메라가 왜곡 모델이면 COLMAP의

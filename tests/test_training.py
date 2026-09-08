@@ -130,3 +130,35 @@ def test_scene_refinement_changes_topology_and_resume_accepts_it(tmp_path):
     assert resumed.resume(str(checkpoint)) == 1
     assert len(resumed.scene.means) == result["gaussians"]
     resumed.step(0, 1)
+
+
+def test_resume_restores_rng_for_reproducible_future_refinement(tmp_path):
+    manifest = make_synthetic(tmp_path / "data", size=16, views=1)
+    config = TrainConfig(
+        iterations=4,
+        exposure_samples=3,
+        joint_start=0,
+        depth_warmup_steps=0,
+        motion_ramp_steps=1,
+        densify_from=2,
+        densify_until=2,
+        densify_every=1,
+        densify_grad_threshold=0,
+        prune_opacity_threshold=0,
+        max_gaussians=30,
+    )
+    uninterrupted = Trainer(str(manifest), config)
+    uninterrupted.step(0, 0)
+    checkpoint = tmp_path / "before-refinement.pt"
+    uninterrupted.save(checkpoint, 1)
+
+    uninterrupted.step(0, 1)
+    expected_means = uninterrupted.scene.means.detach().clone()
+
+    # Deliberately disturb global randomness before loading. Resume must replace it
+    # with the checkpoint state before the next stochastic densification event.
+    torch.manual_seed(123456)
+    resumed = Trainer(str(manifest), config)
+    resumed.resume(str(checkpoint))
+    resumed.step(0, 1)
+    torch.testing.assert_close(resumed.scene.means, expected_means, rtol=0, atol=0)
