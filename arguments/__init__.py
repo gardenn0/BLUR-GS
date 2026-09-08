@@ -13,7 +13,16 @@ class TrainConfig:
     backend: str = "torch"
     device: str = "cpu"
     iterations: int = 30000
-    exposure_samples: int = 9
+    exposure_samples: int = 10
+    sh_degree: int = 3
+    sh_interval: int = 1000
+    densify_from: int = 500
+    densify_until: int = 15000
+    densify_interval: int = 100
+    densify_grad_threshold: float = 0.0002
+    prune_opacity: float = 0.005
+    max_gaussians: int = 1000000
+    opacity_reset_interval: int = 3000
     trajectory_steps: int = 1
     geometry_steps: int = 1
     joint_start: int = 27000
@@ -41,6 +50,14 @@ class TrainConfig:
     seed: int = 42
 
     def validate(self):
+        if self.sh_degree not in range(4) or self.sh_interval < 1:
+            raise ValueError("Invalid SH degree or interval")
+        if self.densify_interval < 1 or self.densify_from < 0 or self.densify_until < 0:
+            raise ValueError("Invalid density schedule")
+        if self.max_gaussians < 1 or self.opacity_reset_interval < 0:
+            raise ValueError("Invalid Gaussian cap or reset interval")
+        if not 0 <= self.prune_opacity < 1 or self.densify_grad_threshold < 0:
+            raise ValueError("Invalid density thresholds")
         if self.iterations <= 0 or self.exposure_samples < 3:
             raise ValueError("Positive iterations and at least three exposure samples are required")
         if self.trajectory_steps < 1 or self.geometry_steps < 1:

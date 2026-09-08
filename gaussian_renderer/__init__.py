@@ -14,6 +14,9 @@ class RenderResult:
     rgb: Tensor
     depth: Tensor
     alpha: Tensor
+    means2d: Tensor | None = None
+    visible: Tensor | None = None
+    point_order: Tensor | None = None
 
 
 class TorchRenderer:
@@ -35,6 +38,8 @@ class TorchRenderer:
         z = xyz[:, 2].clamp_min(self.near)
         x, y = xyz[:, 0], xyz[:, 1]
         uv = torch.stack((K[0, 0] * x / z + K[0, 2], K[1, 1] * y / z + K[1, 2]), -1)
+        if uv.requires_grad:
+            uv.retain_grad()
         zero = torch.zeros_like(z)
         J = torch.stack(
             (
@@ -52,7 +57,7 @@ class TorchRenderer:
         cov2 = J @ R @ cov @ R.T @ J.transpose(-1, -2)
         cov2 = cov2 + self.eps2d * torch.eye(2, device=z.device, dtype=z.dtype)
         inverse = torch.linalg.inv(cov2)
-        colors, opacity = scene.colors[order], scene.opacities[order]
+        colors, opacity = scene.view_colors(w2c)[order], scene.opacities[order]
         visible = (xyz[:, 2] > self.near).to(z.dtype)
         pixels = pixel_grid(height, width, K).reshape(-1, 2)
         rgbs, depths, alphas = [], [], []
@@ -73,6 +78,13 @@ class TorchRenderer:
             torch.cat(rgbs).reshape(height, width, 3),
             torch.cat(depths).reshape(height, width),
             torch.cat(alphas).reshape(height, width),
+            uv,
+            (xyz[:, 2] > self.near)
+            & (uv[:, 0] >= 0)
+            & (uv[:, 0] < width)
+            & (uv[:, 1] >= 0)
+            & (uv[:, 1] < height),
+            order,
         )
 
 
@@ -98,12 +110,12 @@ class GsplatRenderer:
         raster_K = K.clone()
         raster_K[0, 2] += 0.5
         raster_K[1, 2] += 0.5
-        rendered, alpha, _ = self.rasterization(
+        rendered, alpha, info = self.rasterization(
             means=scene.means,
             quats=scene.quats,
             scales=scene.scales,
             opacities=scene.opacities,
-            colors=scene.colors,
+            colors=scene.view_colors(w2c),
             viewmats=w2c[None],
             Ks=raster_K[None],
             width=width,
@@ -114,7 +126,20 @@ class GsplatRenderer:
             render_mode="RGB+ED",
             rasterize_mode="classic",
         )
-        return RenderResult(rendered[0, ..., :3], rendered[0, ..., 3], alpha[0, ..., 0])
+        means2d = info["means2d"]
+        if means2d.requires_grad:
+            means2d.retain_grad()
+        radii = info["radii"]
+        visible = radii > 0
+        if visible.ndim == 3:
+            visible = visible.any(-1)
+        return RenderResult(
+            rendered[0, ..., :3],
+            rendered[0, ..., 3],
+            alpha[0, ..., 0],
+            means2d,
+            visible.reshape(-1),
+        )
 
 
 def make_renderer(backend: str):

@@ -27,10 +27,7 @@ def render_checkpoint(
 ) -> dict:
     saved = torch.load(checkpoint, map_location=device, weights_only=True)
     state = saved["scene"]
-    scene = GaussianScene(
-        state["means"], state["color_logits"].sigmoid(), state["log_scales"].exp()
-    )
-    scene.load_state_dict(state)
+    scene = GaussianScene.from_state(state)
     renderer = make_renderer(backend)
     root, document = load_manifest(manifest)
     destination = Path(output)

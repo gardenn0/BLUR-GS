@@ -33,6 +33,7 @@ def run_cli(*args, cwd=ROOT):
         "scripts/make_synthetic.py",
         "scripts/import_colmap.py",
         "scripts/prepare_motion.py",
+        "scripts/check_training.py",
     ],
 )
 def test_direct_entrypoint_help_from_another_directory(script, tmp_path):
@@ -59,11 +60,11 @@ def test_source_resolution_and_option_aliases(tmp_path):
 
 
 def test_configuration_preserves_defaults_and_applies_overrides_before_validation():
-    assert read_config(None).exposure_samples == 9
+    assert read_config(None).exposure_samples == 10
     config = read_config(
         str(ROOT / "configs/default.yaml"), device="cpu", backend="torch", iterations=2
     )
-    assert config.exposure_samples == 9
+    assert config.exposure_samples == 10
     assert config.iterations == 2 and config.backend == "torch"
     with pytest.raises(ValueError, match="at least three"):
         read_config(None, exposure_samples=2)

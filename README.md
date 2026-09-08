@@ -76,7 +76,7 @@ python -m ruff check .
 ```
 
 Windows PowerShell에서는 활성화 대신 `.\.venv\Scripts\python.exe`로 위의 `python`을
-바꿔 실행할 수 있습니다. 현재 작업 폴더에는 이 가상환경이 설치되어 있습니다.
+바꿔 실행할 수 있습니다. 가상환경은 실행할 컴퓨터마다 설치해야 합니다.
 
 합성 데이터의 흐름은 **알려진 3D 장면으로 계산한 정답**입니다. 이 smoke 테스트는
 Image-as-an-IMU 추론이나 실제 데이터셋 성능 실험이 아닙니다.
@@ -109,7 +109,7 @@ python render.py -s data/my-scene -m outputs/my-scene --output outputs/my-scene-
 ```
 
 체크포인트 재개 시 학습 설정과 프레임 순서를 유지하고, 총 반복 횟수를 늘릴 수 있습니다.
-현재 linear 체크포인트는 format version 2입니다. 기존 Bezier 체크포인트는 선명한 뷰
+현재 linear 체크포인트는 format version 2와 training_state_version 1을 사용합니다. 이전 학습 상태는 렌더링만 지원합니다. 기존 Bezier 체크포인트는 선명한 뷰
 렌더링에는 사용할 수 있지만, linear 학습은 새로운 run으로 시작해야 합니다.
 
 ```bash
@@ -117,7 +117,7 @@ python train.py -s data/my-scene -m outputs/my-scene --config configs/default.ya
 ```
 
 학습 출력은 `checkpoint.pt`, `scene.ply`, `sharp/*.png`, `metrics.jsonl`, `summary.json`입니다.
-PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel view는 새로운 `w2c`,
+PLY는 학습한 SH 계수를 포함하는 표준 Gaussian 표현입니다. Novel view는 새로운 `w2c`,
 `K`를 가진 데이터 manifest로 렌더링할 수 있으며, 추론 시 모션 추정 모델은 필요 없습니다.
 
 ## 실행 인터페이스와 호환성
@@ -139,7 +139,7 @@ PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel vie
 - 이전 `python -m blur_gs train|render|evaluate|synthetic|import-colmap|prepare-motion`
   명령과 `blur-gs` 콘솔 명령은 새 코드로 연결됩니다. Python import 경로는
   [구조 변경 안내](docs/layout.md)를 따르세요.
-- 체크포인트 format version 2, linear 궤적, 기본 virtual pose 9개, smoke 5개,
+- 체크포인트 format version 2, linear 궤적, 기본 virtual pose 10개, smoke 10개,
   렌더러와 최적화 수식은 폴더 재구성으로 변경하지 않았습니다.
 
 ## 구현 선택과 현재 제약
@@ -149,15 +149,15 @@ PLY는 degree-zero SH를 사용하는 표준 Gaussian 표현입니다. Novel vie
   카메라 위치가 항상 월드 좌표에서 직선을 그리거나 body velocity가 일정하다는 의미는 아닙니다.
   CoMoGaussian의 Neural ODE,
   CMR 및 학습되는 픽셀별 노출 가중치는 현재 이식하지 않았습니다.
-- 재블러링 virtual pose는 기본 **9개** (`exposure_samples: 9`), CPU smoke는 **5개**입니다.
+- 재블러링 virtual pose는 기본 **10개** (`exposure_samples: 10`), CPU smoke도 **10개**입니다.
   시작과 끝을 포함해 균일하게 샘플링하며, 두 학습 endpoint와 렌더링 샘플 수는 별개입니다.
-  기본 9개는 `t = 0, 0.125, ..., 1`이고 가중치는 각각 `1/9`입니다.
+  기본 10개는 `t = 0, 1/9, ..., 1`이고 가중치는 각각 `1/10`입니다.
   학습 iteration마다 중간 시점 깊이를 위한 렌더링을 별도로 한 번 수행합니다.
 - Linear twist의 2차 시간 미분은 0이므로 acceleration loss는 정확히 0이며 기본 가중치도
   0입니다. 중간 시점 pose anchor는 계속 적용합니다. `linear_exposure`는 이 궤적 선택이
   아니라 선형 광도 공간에서 재블러링할지를 뜻하는 별도 설정입니다.
-- Gaussian 수는 고정되고 외관은 degree-zero SH입니다. densification/pruning 및
-  고차 SH는 후속 고품질 재구성 실험에서 확장할 부분입니다.
+- Gaussian 증식·분할·pruning·opacity reset과 최대 degree-3 SH를 지원합니다.
+  학습 설정과 재개 제약은 [학습 안내](docs/training.md)를 참고하세요.
 - Image-as-an-IMU 공식 모델은 흐름과 깊이를 출력합니다. 신뢰도는 BLUR-GS에서 추가한
   텍스처·포화·유효영역 휴리스틱이며 학습된 confidence head가 아닙니다.
 - IAAI의 virtual-start 흐름을 중간 시점 Gaussian 깊이와 같은 3D 점에 맞춰 비교합니다.

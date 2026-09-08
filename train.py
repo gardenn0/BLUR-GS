@@ -22,6 +22,7 @@ from utils.motion_loss_utils import motion_loss
 from gaussian_renderer import make_renderer
 from gaussian_renderer.blur_renderer import render_blur
 from scene.gaussian_model import GaussianScene
+from scene.density import DensityController
 from scene.trajectory import (
     CHECKPOINT_VERSION,
     TRAJECTORY_MODEL,
@@ -53,12 +54,36 @@ class Trainer:
         self.config = config
         self.manifest = str(Path(manifest).resolve())
         self.frames, cloud = load_dataset(manifest)
-        self.scene = GaussianScene(**{k: v.to(config.device) for k, v in cloud.items()})
+        self.scene = GaussianScene(
+            **{k: v.to(config.device) for k, v in cloud.items()}, sh_degree=config.sh_degree
+        )
         self.trajectories = nn.ModuleList(
             [ExposureTrajectory(f.w2c.to(config.device)) for f in self.frames]
         )
         self.renderer = make_renderer(config.backend)
-        self.scene_optimizer = torch.optim.Adam(
+        self.scene_optimizer = self.make_scene_optimizer()
+        self.trajectory_optimizer = torch.optim.Adam(
+            self.trajectories.parameters(), lr=config.trajectory_lr
+        )
+        self.times = torch.linspace(0, 1, config.exposure_samples, device=config.device)
+        self.initialization_notes = []
+        self.orientations = [None if f.sign_ambiguous else False for f in self.frames]
+        centers = torch.stack([-f.w2c[:3, :3].T @ f.w2c[:3, 3] for f in self.frames])
+        extent = float((centers - centers.mean(0)).norm(dim=-1).max())
+        if extent < 1e-6:
+            extent = float(
+                (self.scene.means.detach() - self.scene.means.detach().mean(0))
+                .norm(dim=-1)
+                .max()
+                .clamp_min(1e-3)
+            )
+        self.density = DensityController(self.scene, extent)
+        self.exposure_results = []
+        self.geometry_updates = 0
+
+    def make_scene_optimizer(self):
+        config = self.config
+        return torch.optim.Adam(
             [
                 {"params": [self.scene.means], "lr": config.position_lr},
                 {
@@ -68,11 +93,6 @@ class Trainer:
             ],
             eps=1e-15,
         )
-        self.trajectory_optimizer = torch.optim.Adam(
-            self.trajectories.parameters(), lr=config.trajectory_lr
-        )
-        self.times = torch.linspace(0, 1, config.exposure_samples, device=config.device)
-        self.initialization_notes = []
 
     @torch.no_grad()
     def initialize_motion(self):
@@ -117,14 +137,31 @@ class Trainer:
             frame.confidence,
             (ref.alpha.detach() > config.alpha_threshold) & (depth.detach() > 0),
             reference=frame.flow_reference,
-            ambiguous=frame.sign_ambiguous,
+            ambiguous=self.orientations[frame_index] is None,
+            fixed_reverse=bool(self.orientations[frame_index]),
             flow_weight=config.flow_weight,
             magnitude_weight=config.magnitude_weight,
             direction_weight=config.direction_weight,
             magnitude=config.magnitude,
         )
+        # Defer locking while there is no motion/coverage evidence. Once selected,
+        # preserve the image-level direction through all phases and checkpoints.
+        if (
+            self.orientations[frame_index] is None
+            and m["valid_fraction"] > 0
+            and (path[-1] - path[0]).detach().norm(dim=-1).max() > 1e-6
+        ):
+            self.orientations[frame_index] = bool(m["reversed"].item())
+        self.exposure_results = []
         blurred = render_blur(
-            self.renderer, self.scene, poses, frame.K, h, w, linear_exposure=config.linear_exposure
+            self.renderer,
+            self.scene,
+            poses,
+            frame.K,
+            h,
+            w,
+            linear_exposure=config.linear_exposure,
+            render_results=self.exposure_results if phase != "trajectory" else None,
         )
         rgb = rgb_loss(blurred, frame.image, config.dssim_weight)
         acceleration, anchor = trajectory.regularizers()
@@ -137,6 +174,9 @@ class Trainer:
 
     def step(self, frame_index: int, step: int) -> dict:
         phase = phase_at(step, self.config)
+        self.scene.active_sh_degree.fill_(
+            min(self.config.sh_degree, step // self.config.sh_interval)
+        )
         self.scene.requires_grad_(phase != "trajectory")
         self.trajectories.requires_grad_(phase != "geometry")
         self.scene_optimizer.zero_grad(set_to_none=True)
@@ -151,6 +191,11 @@ class Trainer:
         if not torch.isfinite(losses["total"]):
             raise FloatingPointError(f"Non-finite loss at step {step}")
         losses["total"].backward()
+        if phase != "trajectory" and step < self.config.densify_until:
+            self.density.accumulate(
+                self.exposure_results, *self.frames[frame_index].image.shape[:2]
+            )
+        self.exposure_results.clear()
         parameters = [
             p
             for p in list(self.scene.parameters()) + list(self.trajectories.parameters())
@@ -159,12 +204,23 @@ class Trainer:
         nn.utils.clip_grad_norm_(parameters, self.config.gradient_clip, error_if_nonfinite=True)
         if phase != "trajectory":
             self.scene_optimizer.step()
+            self.geometry_updates += 1
+            if step < self.config.densify_until:
+                if (
+                    step >= self.config.densify_from
+                    and self.geometry_updates % self.config.densify_interval == 0
+                ):
+                    self.density.refine(self.scene, self.scene_optimizer, self.config)
+                interval = self.config.opacity_reset_interval
+                if interval and self.geometry_updates % interval == 0:
+                    self.density.reset_opacity(self.scene, self.scene_optimizer)
         if phase != "geometry":
             self.trajectory_optimizer.step()
         return {
             "step": step + 1,
             "phase": phase,
             "frame": self.frames[frame_index].name,
+            "gaussians": len(self.scene.means),
             **{k: float(v.detach()) for k, v in losses.items()},
         }
 
@@ -172,6 +228,10 @@ class Trainer:
         path.parent.mkdir(parents=True, exist_ok=True)
         checkpoint = {
             "format_version": CHECKPOINT_VERSION,
+            "training_state_version": 1,
+            "orientations": self.orientations,
+            "density": self.density.state_dict(),
+            "geometry_updates": self.geometry_updates,
             "trajectory_model": TRAJECTORY_MODEL,
             "step": step,
             "config": asdict(self.config),
@@ -187,6 +247,8 @@ class Trainer:
     def resume(self, path: str) -> int:
         checkpoint = torch.load(path, map_location=self.config.device, weights_only=True)
         require_linear_checkpoint(checkpoint)
+        if checkpoint.get("training_state_version") != 1:
+            raise ValueError("Legacy checkpoint is render-only; start a new training run")
         if checkpoint["frame_names"] != [f.name for f in self.frames]:
             raise ValueError("Resume requires the same training frames in the same order")
         previous = checkpoint["config"]
@@ -196,7 +258,11 @@ class Trainer:
                 raise ValueError(
                     f"Resume config changed {key}; keep optimization settings identical"
                 )
-        self.scene.load_state_dict(checkpoint["scene"])
+        self.scene = GaussianScene.from_state(checkpoint["scene"])
+        self.scene_optimizer = self.make_scene_optimizer()
+        self.orientations = checkpoint["orientations"]
+        self.density.load_state_dict(checkpoint["density"])
+        self.geometry_updates = checkpoint["geometry_updates"]
         self.trajectories.load_state_dict(checkpoint["trajectories"])
         self.scene_optimizer.load_state_dict(checkpoint["scene_optimizer"])
         self.trajectory_optimizer.load_state_dict(checkpoint["trajectory_optimizer"])

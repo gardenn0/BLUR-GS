@@ -86,10 +86,10 @@ def test_default_virtual_pose_count_is_independent_of_two_controls(tmp_path):
     trainer = Trainer(str(manifest), TrainConfig())
     trajectory = trainer.trajectories[0]
     trajectory.initialize_from_camera_motion(torch.tensor([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]))
-    assert trainer.config.exposure_samples == 9
-    torch.testing.assert_close(trainer.times, torch.arange(9) / 8)
+    assert trainer.config.exposure_samples == 10
+    torch.testing.assert_close(trainer.times, torch.arange(10) / 9)
     assert trajectory.controls.shape == (2, 6)
-    assert trajectory(trainer.times).shape == (9, 4, 4)
+    assert trajectory(trainer.times).shape == (10, 4, 4)
     calls = []
     renderer = trainer.renderer
 
@@ -99,6 +99,6 @@ def test_default_virtual_pose_count_is_independent_of_two_controls(tmp_path):
 
     trainer.renderer = recording_renderer
     trainer.objective(0, 0, "joint")
-    # One midpoint depth pass plus nine exposure renders, with no change to sample count.
-    assert len(calls) == 10
+    # One midpoint depth pass plus ten exposure renders, with no change to sample count.
+    assert len(calls) == 11
     torch.testing.assert_close(torch.stack(calls[1:]), trajectory(trainer.times))
