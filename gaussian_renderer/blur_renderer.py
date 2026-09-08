@@ -16,6 +16,7 @@ def render_blur(
     width: int,
     weights: Tensor | None = None,
     linear_exposure: bool = True,
+    render_results: list | None = None,
 ) -> Tensor:
     n = len(poses)
     if weights is None:
@@ -27,7 +28,10 @@ def render_blur(
     weights = weights / weights.sum()
     accumulated = None
     for pose, weight in zip(poses, weights):
-        rgb = renderer(scene, pose, K, height, width).rgb
+        result = renderer(scene, pose, K, height, width)
+        if render_results is not None:
+            render_results.append(result)
+        rgb = result.rgb
         if linear_exposure:
             rgb = srgb_to_linear(rgb)
         value = weight * rgb

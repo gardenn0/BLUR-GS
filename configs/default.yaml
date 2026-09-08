@@ -2,8 +2,18 @@
 backend: gsplat
 device: cuda
 iterations: 30000
-# Render nine virtual poses including both exposure endpoints (two learned endpoint twists).
-exposure_samples: 9
+# Render ten virtual poses including both exposure endpoints (two learned endpoint twists).
+exposure_samples: 10
+sh_degree: 3
+sh_interval: 1000
+densify_from: 500
+densify_until: 15000
+# Intervals below count geometry/joint updates, not frozen trajectory steps.
+densify_interval: 100
+densify_grad_threshold: 0.0002
+prune_opacity: 0.005
+max_gaussians: 1000000
+opacity_reset_interval: 3000
 trajectory_steps: 1
 geometry_steps: 1
 joint_start: 27000

@@ -21,6 +21,7 @@ def motion_loss(
     magnitude_weight: float = 0.1,
     direction_weight: float = 0.01,
     magnitude: str = "endpoint",
+    fixed_reverse: bool = False,
 ) -> dict[str, Tensor]:
     """One temporal direction per image; never choose an independent sign per pixel.
 
@@ -32,7 +33,7 @@ def motion_loss(
     if reference not in {"start", "midpoint"} or magnitude not in {"endpoint", "path"}:
         raise ValueError("Invalid flow reference or magnitude mode")
     candidates = []
-    for reverse in [False, True] if ambiguous else [False]:
+    for reverse in [False, True] if ambiguous else [fixed_reverse]:
         p = path.flip(0) if reverse else path
         flow = p[-1] - p[0]
         if reference == "start":

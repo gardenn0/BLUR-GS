@@ -97,3 +97,32 @@ run. Local generated artifacts are excluded from Git.
 
 Real-data IAAI checkpoint inference and CUDA execution remain unverified. They require
 the official weights, prepared images/COLMAP geometry, and a suitable GPU environment.
+# Training extension verification (2026-09-08)
+
+The local 11-page Blur_GS.pdf was read directly, including rendered equation pages
+2-4. Linear endpoint twists satisfy its parameterization-independent Sec. 1.3;
+ten exposure samples implement Eqs. 18-19, with a separate midpoint depth pass.
+
+- Windows CPU, Python 3.12, PyTorch 2.14.0+cpu.
+- Full regression run: **41 passed, 1 skipped** in 96.15 seconds. The skip requires
+  CUDA + gsplat. The subsequently added check-training CLI help case is verified separately.
+- `ruff check .`: passed.
+- Ten-pose synthetic CLI run: 24 iterations, two 24x24 views, all three training
+  phases, checkpoints, SH-capable PLY, sharp renders, and metric evaluation completed.
+  RGB loss was 0.247907 at the first logged step and 0.213278 at the last (different
+  fixture views). Mean sharp-reference PSNR 13.2769, SSIM 0.389266; these are smoke
+  fixture numbers, not real-data benchmark results.
+- A dedicated test forces density updates and SH activation early, grows the scene,
+  saves/resumes the changed topology, and compares subsequent losses and all scene
+  tensors with uninterrupted training through further refinement and opacity reset.
+- Separate tests check clone/split/prune, Gaussian cap, preserved/cleared Adam moments,
+  SH view dependence and PLY coefficient count, and fixed orientation after endpoint reversal.
+- The initial pytest attempt failed to access the system pytest temporary folder;
+  rerunning with a workspace `--basetemp` resolved the environmental setup errors.
+- No NVIDIA runtime, real scene, or official IAAI checkpoint was available for this
+  run. CUDA rasterizer metadata was checked against gsplat 1.5.3 source, and the
+  CUDA-only regression now also checks density-gradient metadata. This is not a
+  successful CUDA training or official-checkpoint inference claim.
+
+Earlier entries below describe historical versions, including old sample counts
+and fixed-size DC-only scenes. Current settings and limitations are in `training.md`.

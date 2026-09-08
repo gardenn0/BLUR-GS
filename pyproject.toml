@@ -7,7 +7,7 @@ name = "blur-gs"
 version = "0.2.0"
 description = "Geometry-coupled continuous exposure trajectories for motion-blurred Gaussian splatting"
 requires-python = ">=3.10"
-dependencies = ["torch>=2.6,<3", "numpy>=1.24,<3", "Pillow>=10", "PyYAML>=6"]
+dependencies = ["torch>=2.6,<3", "numpy>=1.24,<3", "Pillow>=10", "PyYAML>=6", "scipy>=1.10"]
 
 [project.optional-dependencies]
 cuda = ["gsplat==1.5.3"]

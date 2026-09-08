@@ -47,7 +47,7 @@ when no motion manifest exists. This is not automatic import of raw COLMAP data.
 `scripts/import_colmap.py` and `scripts/prepare_motion.py` first for real scenes.
 `-m` selects a training output directory, not a different checkpoint file format.
 
-GPU rendering still uses the external `gsplat` dependency. No empty CUDA submodule is
-added, no external kernels are vendored, and densification/pruning or higher-order SH
-are not implicitly introduced by this refactor. Default exposure samples remain nine;
-the CPU smoke configuration still uses five.
+GPU rendering uses the external `gsplat` dependency without vendored CUDA kernels.
+The subsequent training extension adds `scene/density.py` and `utils/sh_utils.py` for
+adaptive Gaussians and degree-3 SH. Default and smoke exposure samples are both ten.
+See `docs/training.md` for schedules and checkpoint compatibility.

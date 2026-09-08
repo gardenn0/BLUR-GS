@@ -7,6 +7,7 @@ from utils.pose_utils import se3_exp
 from gaussian_renderer import GsplatRenderer, TorchRenderer
 from gaussian_renderer.blur_renderer import render_blur
 from scene.gaussian_model import GaussianScene
+from scene.density import DensityController
 
 
 def scene_and_camera(device="cpu"):
@@ -51,3 +52,8 @@ def test_cuda_renderer_pose_and_depth_gradients():
     loss.backward()
     assert torch.isfinite(twist.grad).all() and twist.grad.abs().sum() > 0
     assert torch.isfinite(scene.means.grad).all() and scene.means.grad.abs().sum() > 0
+    controller = DensityController(scene, 1.0)
+    controller.accumulate([result], 15, 15)
+    assert controller.count.sum() > 0
+    assert torch.isfinite(controller.gradient_sum).all()
+    assert controller.gradient_sum.sum() > 0

@@ -8,7 +8,7 @@ additional claims made by these papers.
 
 | BLUR-GS specification | Implementation | Status |
 | --- | --- | --- |
-| Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.gaussian_model.GaussianScene` | Anisotropic Gaussian scene, DC appearance; fixed point count |
+| Sec. 1.2 Gaussian centers, covariance, opacity, appearance | `scene.gaussian_model.GaussianScene`, `scene.density` | Anisotropic scene, progressive degree-3 SH, adaptive point count |
 | Eqs. 13-15 continuous SE(3) trajectory | `scene.trajectory.ExposureTrajectory`, `utils.pose_utils.se3_exp` | Linear in Lie algebra, two 6D endpoint controls per image |
 | Eqs. 17-20 exposure integration and L1/DSSIM | `gaussian_renderer.blur_renderer.render_blur`, `utils.loss_utils.rgb_loss` | Uniform temporal samples by default; optional weights in renderer API |
 | Eqs. 21-23 fixed observed motion | `scene.motion_prior.ImageAsIMU`, `prepare_motion` | Official network adapter; locally defined confidence heuristic |
@@ -45,9 +45,9 @@ when the endpoint twists do not commute. Twist acceleration is exactly zero; its
 reported as zero and disabled by default. The midpoint remains trainable with a pose anchor.
 
 Virtual render poses are sampled independently of the number of learned endpoints. Default
-`exposure_samples=9` yields times `0, 1/8, ..., 1`, each weighted `1/9`; the smoke config uses
-5 samples. Each objective additionally performs one midpoint depth render (the midpoint is
-already among the nine default exposure poses). `linear_exposure` controls radiometric
+`exposure_samples=10` yields times `0, 1/9, ..., 1`, each weighted `1/10`; the smoke config uses
+10 samples. Each objective additionally performs one midpoint depth render (the midpoint is
+separate from the ten exposure poses). `linear_exposure` controls radiometric
 integration in linear light and is unrelated to the trajectory parameterization.
 
 New checkpoints carry `format_version=2` and `trajectory_model=linear_se3`. Resume rejects
@@ -68,7 +68,9 @@ not a field attached to the midpoint image. Given a midpoint point with rendered
 we project it to `p0` and `p1`. We compare `p1-p0` to the observed flow sampled at `p0`.
 This transports the fixed measurement to the same reconstructed scene point. For the
 opposite time orientation we compare `p0-p1` to the same observed flow sampled at `p1`.
-The lower-loss orientation is chosen **once per image**, preserving global consistency.
+The lower-loss orientation is chosen **once per image** at the first supported nonzero
+motion estimate and checkpointed. This preserves the image's loss convention; it does
+not establish absolute time direction or synchronization between images.
 This does not establish the physical time direction from a single image. Temporal
 disambiguation using adjacent video frames from IAAI Sec. 4.3 is not currently enabled.
 
@@ -112,7 +114,7 @@ objectives in BLUR-GS are not silently fabricated.
 By default, rendered sRGB colors are transformed to linear intensity before averaging
 and converted back, following Image-as-an-IMU's image-formation discussion. Set
 `linear_exposure: false` for direct intensity averaging as in a dataset's own convention.
-The current appearance is bounded, view-independent RGB (equivalent to DC SH); no sensor
+Appearance uses bounded DC RGB plus progressively activated degree-3 SH; no sensor
 response or exposure gain is fitted.
 
 ## Relationship to CoMoGaussian
@@ -127,10 +129,10 @@ comparisons. No external repository source has been vendored here.
 
 ## Experimental limitations
 
-This version has no Gaussian densification/pruning, high-order SH, multi-scale training,
+This version includes Gaussian densification/pruning and high-order SH, but not multi-scale training,
 rolling-shutter model, dynamic-object mask, or learned shutter weights. It can optimize an
 existing point set end-to-end, but those limitations matter for large-scene reconstruction
 quality. PyTorch rendering is an O(NHW) correctness backend with no tile culling; gsplat
-is the intended GPU backend. Startup scale estimation is chunked O(N^2) nearest-neighbor
+is the intended GPU backend. Startup scale estimation uses a CPU KD-tree for nearest-neighbor
 distance unless input scales are supplied. COLMAP import caps initial points at 10,000 by
 default. There is no claimed real-scene benchmark reproduction in this release.
