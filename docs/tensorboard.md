@@ -81,8 +81,10 @@ Images under `test/render_left_gt_right/*` show the prediction on the left and
 sharp ground truth on the right. Per-image scores, GT paths and mean scores are
 also saved to `evaluation.jsonl`, separate from the existing `metrics.jsonl`.
 Predictions are clamped to [0,1]; PSNR uses an MSE floor of 1e-12. SSIM uses the
-repository's existing implementation. These metrics do not include LPIPS or
+repository's existing implementation. These training-time metrics do not include LPIPS or
 test-pose fitting and should not be described as an identical baseline protocol.
+Use the [LPIPS checkpoint evaluator](lpips.md) to compute LPIPS after training
+and add `test/lpips` to the same TensorBoard run without retraining.
 
 Monitoring can be enabled when resuming an older checkpoint. Keep all optimization
 settings the same and add the reporting flags plus, for example,
