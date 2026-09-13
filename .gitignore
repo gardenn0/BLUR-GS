@@ -17,3 +17,7 @@ checkpoints/
 *.npz
 wandb/
 snapshot_*.dump
+
+# Upstream demo assets, generated docs and binary outputs are not redistributed.
+assets/
+submodules/diff-gaussian-rasterization-pose-backprop/third_party/glm/doc/
