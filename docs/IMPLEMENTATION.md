@@ -92,16 +92,28 @@ Run the included actual-rasterizer finite-difference test on your GPU environmen
 | geometry | yes | frozen (including mask/weight) | yes | no |
 | joint | yes | yes | yes | yes through reprojection |
 
-Defaults: flow starts after iteration 4000; its weight ramps for 2000 iterations.
-After iteration 20000, alternate 50 trajectory steps and 50 geometry steps.
-Densification is suppressed while Gaussian parameters are frozen. Each phase
-switch clears both optimizers' gradients, preventing stale updates. All Gaussian
-parameters, not just centers, may respond via compositing. This implementation
-does not claim translation-only geometry gradient routing.
+Default `flow_mode=como` preserves upstream optimizer step/zero-grad timing,
+parameter trainability, learning-rate updates and densification/pruning schedule.
+Both optimizer update gates stay enabled; train.py retains CoMo's start_warp
+condition for kernel updates. After flow_start (default 4000), the phase is joint
+immediately, with no trajectory-only stage and no alternating freezes. The flow
+weight ramps for 2000 iterations. geometry_start/alternate_every and the separate
+geometry_flow_weight are unused by this mode. Zero flow weight bypasses the
+auxiliary render and flow computation. RGB terms remain unchanged.
 
-`flow_mode=trajectory` keeps trajectory_prior for the entire run.
-`flow_mode=joint` starts joint updates after geometry_start. Both are ablations.
-Flow and geometry_flow weights are experimental, not paper-tuned hyperparameters.
+Legacy modes remain explicit ablations: `trajectory` keeps trajectory_prior;
+`joint` uses trajectory_prior until geometry_start then joint;
+`alternating` uses trajectory_prior until geometry_start, then alternates
+50 trajectory and 50 geometry steps by default. Legacy schedules manage
+requires_grad and clear gradients at the beginning of each iteration;
+geometry freezes suppress densification. These operations are bypassed in como
+mode. All Gaussian parameters, not just centers, may respond via compositing;
+translation-only geometry gradient routing is not claimed.
+
+Flow weights are experimental, not paper-tuned hyperparameters. The default
+isolates the additive loss at the schedule level, not computational cost or
+resulting optimization trajectory. Extra gradients can change subsequent
+geometry and pruning outcomes even when their schedules are unchanged.
 
 ## Checkpoint and evaluation
 

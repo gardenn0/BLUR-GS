@@ -42,13 +42,19 @@ def test_supervisor_routes_loss_in_all_phases(tmp_path, monkeypatch):
     kernel = SimpleNamespace(optimizer=torch.optim.Adam([t]))
     view = SimpleNamespace(image_name="a", image_width=24, image_height=16)
     cfg = BlurConfig(flow_cache=str(tmp_path), flow_start=0, geometry_start=2,
-                     flow_ramp=1, alternate_every=1)
+                     flow_ramp=1, alternate_every=1, flow_mode="alternating")
     supervisor = BlurSupervisor(cfg, [view], 0)
     def depth_stub(camera, pc, pipe, kernel_size, *, geometry_grad, min_alpha):
         d = (z if geometry_grad else z.detach()).expand(1, 16, 24)
         return d, torch.ones_like(d), torch.ones_like(d, dtype=torch.bool)
     monkeypatch.setattr(training, "render_z_depth", depth_stub)
-    for step, expected_geometry, expected_kernel in [(1, False, True), (3, False, True), (4, True, False)]:
+    for mode, step, expected_geometry, expected_kernel in [("alternating", 1, False, True), ("alternating", 3, False, True), ("alternating", 4, True, False), ("como", 1, True, True)]:
+        cfg.flow_mode = mode
+        # Mimic normal optimizer cleanup and fresh-run trainability for each case.
+        z.requires_grad_(True)
+        t.requires_grad_(True)
+        pc.optimizer.zero_grad(set_to_none=True)
+        kernel.optimizer.zero_grad(set_to_none=True)
         supervisor.begin(step, pc, kernel)
         w0 = torch.eye(4)
         w1 = w0 + torch.nn.functional.pad(t.reshape(1, 1), (3, 0, 0, 3))

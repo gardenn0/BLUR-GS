@@ -33,8 +33,8 @@ CoMoKernel -> exposure cameras                |
   distance-depth supervision and no CUDA source changes.
 - Independently computed forward/backward endpoint flow, global direction
   selection, validity/occlusion masks, robust flow loss and coverage logging.
-- Trajectory-prior warm-up, alternating geometry/trajectory updates and a joint
-  ablation with explicit gradient routing.
+- Default CoMoGaussian optimizer schedule with an additive flow loss; legacy
+  alternating/trajectory schedules remain explicit ablations.
 - Full BLUR-GS checkpoints including the CoMo model/optimizer and RNG state.
 - CPU geometry/gradient tests plus an optional actual CUDA renderer gradient test.
 
@@ -167,15 +167,44 @@ Migration: previously omitting `--flow_cache` selected the baseline. Add
 The standalone `precompute_blur_flow.py` remains available for optional offline
 preparation, but is no longer required in the normal training workflow.
 
-### BLUR-GS: trajectory prior followed by alternating refinement
+### Controlled comparison against CoMoGaussian
+
+The default `--flow_mode como` retains CoMoGaussian's optimizer step/zero-grad
+and learning-rate schedule, trajectory start, RGB losses, pixel-weight/mask
+schedule, and densification/pruning schedule. It never freezes Gaussian or
+CoMoKernel parameters to alternate their updates. After `flow_start`, flow
+supervises both geometry and trajectory in the same backward pass:
+
+```text
+baseline: L = L_CoMoGaussian
+BLUR-GS:  L = L_CoMoGaussian + lambda(iteration) * L_flow
+```
+
+Use the same dataset split, resolution, iteration budget and original CoMo
+options for both runs (adjust `-r` to your dataset):
 
 ```bash
+# CoMoGaussian baseline
+python train.py -s /data/scene -m output/baseline --eval -r 1 --baseline
+
+# BLUR-GS; como is the default mode
 python train.py -s /data/scene -m output/blur_gs --eval -r 1 \
-  --flow_cache /data/scene/flow_cache \
-  --flow_weight 0.01 --geometry_flow_weight 0.01 \
-  --flow_start 4000 --geometry_start 20000 --flow_ramp 2000 \
-  --flow_mode alternating --alternate_every 50
+  --flow_mode como --flow_weight 0.01 --flow_start 4000 --flow_ramp 2000
 ```
+
+Flow starts after iteration 4000 and ramps up over 2000 iterations; these
+settings control only the additional loss, not the backbone update schedule.
+`geometry_start`, `alternate_every`, and `geometry_flow_weight` do not control
+como mode. `flow_start` must be at least CoMo's `start_warp`.
+`--flow_weight 0` skips flow-loss evaluation in como mode, useful for a
+zero-loss control (startup still prepares/validates flow; `--baseline` needs none).
+
+The additional depth/reprojection passes cost time and GPU memory. Matching
+update schedules does not imply matching runtime, gradients, Gaussian counts,
+or output images. Auxiliary depth camera gradients remain blocked as described
+in the implementation notes; trajectory flow gradients use reprojection.
+Compare held-out PSNR/SSIM/LPIPS, with matched seeds/settings, and also report
+runtime/memory. Full-scene baseline parity and improvement remain unverified.
 
 These are starting hyperparameters, not validated optimal settings. The flow
 penalty is measured in the estimator's 320x224 pixel units. Training logs report
@@ -183,7 +212,16 @@ raw loss, selected direction, valid fraction, skipped loss and effective weight.
 If most flow steps are skipped, inspect depth/alpha, coordinate alignment and
 domain mismatch; a zero loss under no valid pixels is not evidence of success.
 
-### Ablations
+### Legacy schedule ablations
+
+These explicitly change gradient routing or update schedules and should be
+reported separately from the default additive-loss comparison.
+
+```bash
+# Previous default: staged prior then alternating frozen parameter groups.
+python train.py -s /data/scene -m output/alternating --eval -r 1 \
+  --flow_mode alternating --geometry_start 20000 --alternate_every 50
+```
 
 ```bash
 # RGB updates geometry; flow only supervises the trajectory throughout.
@@ -212,6 +250,10 @@ training flags and iteration budget**, adding:
 ```bash
 --start_checkpoint output/blur_gs/blur_chkpnt20000.pth
 ```
+
+The default flow mode changed from `alternating` to `como`. To resume an older
+alternating run, explicitly pass `--flow_mode alternating` with its original
+settings. Start a fresh run for the new controlled comparison.
 
 Only load trusted checkpoints. Original Gaussian-only CoMo checkpoints cannot
 resume BLUR-GS, because they omit its CoMo trajectory model. Sharp novel views

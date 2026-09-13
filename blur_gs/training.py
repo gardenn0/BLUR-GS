@@ -14,7 +14,7 @@ class BlurConfig:
     flow_start: int = 4000
     geometry_start: int = 20000
     flow_ramp: int = 2000
-    flow_mode: str = "alternating"
+    flow_mode: str = "como"
     alternate_every: int = 50
     flow_direction: str = "auto"
     flow_min_alpha: float = 0.5
@@ -31,7 +31,7 @@ def add_arguments(parser):
     for name, value in asdict(BlurConfig()).items():
         kwargs = dict(default=value, type=type(value))
         if name == "flow_mode":
-            kwargs["choices"] = ("trajectory", "alternating", "joint")
+            kwargs["choices"] = ("como", "trajectory", "alternating", "joint")
         if name == "flow_direction":
             kwargs["choices"] = ("auto", "forward", "backward")
         group.add_argument("--" + name, **kwargs)
@@ -44,6 +44,8 @@ def config_from_args(args):
 def phase_at(iteration, config):
     if not config.enabled or iteration <= config.flow_start:
         return "baseline"
+    if config.flow_mode == "como":
+        return "joint"
     if config.flow_mode == "trajectory" or iteration <= config.geometry_start:
         return "trajectory_prior"
     if config.flow_mode == "joint":
@@ -62,8 +64,10 @@ class BlurSupervisor:
     def __init__(self, config, cameras, start_warp):
         self.config = config
         if config.enabled:
-            if config.flow_start < start_warp or config.geometry_start < config.flow_start:
-                raise ValueError("Require start_warp <= flow_start <= geometry_start")
+            if config.flow_start < start_warp:
+                raise ValueError("Require start_warp <= flow_start")
+            if config.flow_mode in ("alternating", "joint") and config.geometry_start < config.flow_start:
+                raise ValueError("Require flow_start <= geometry_start in staged modes")
             if config.alternate_every < 1 or config.flow_ramp < 0:
                 raise ValueError("Invalid alternation/ramp length")
             if min(config.flow_weight, config.geometry_flow_weight) < 0:
@@ -77,7 +81,9 @@ class BlurSupervisor:
         self.phase = phase_at(iteration, self.config)
         self.update_geometry = self.phase != "trajectory"
         self.update_kernel = self.phase != "geometry"
-        if self.config.enabled:
+        # In como mode, train.py retains upstream zero_grad/step timing and
+        # parameter trainability. Only legacy schedules need freeze management.
+        if self.config.enabled and self.config.flow_mode != "como":
             gaussians.optimizer.zero_grad(set_to_none=True)
             kernel.optimizer.zero_grad(set_to_none=True)
             set_optimizer_grad(gaussians.optimizer, self.update_geometry)
@@ -86,6 +92,9 @@ class BlurSupervisor:
     def loss(self, iteration, view, warped_cameras, gaussians, pipe, kernel_size):
         zero = gaussians.get_xyz.new_zeros(())
         if self.phase == "baseline":
+            return zero, {}
+        weight = self.config.geometry_flow_weight if self.phase == "geometry" else self.config.flow_weight
+        if weight == 0:
             return zero, {}
         if len(warped_cameras) < 2:
             raise ValueError("BLUR-GS requires at least two exposure samples")
@@ -102,6 +111,5 @@ class BlurSupervisor:
                                      direction=self.config.flow_direction,
                                      min_valid_fraction=self.config.flow_min_valid_fraction)
         ramp = min(1., (iteration - self.config.flow_start) / max(1, self.config.flow_ramp))
-        weight = self.config.geometry_flow_weight if self.phase == "geometry" else self.config.flow_weight
         stats.update(raw_loss=float(value.detach()), weight=weight * ramp)
         return weight * ramp * value, stats

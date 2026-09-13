@@ -5,7 +5,7 @@ Date: 2026-09-13
 ## Executed locally
 
 - Windows, Python 3.12.14, PyTorch 2.6.0+cpu in a workspace-local virtualenv.
-- `python -m pytest -q`: **23 passed, 1 skipped**.
+- `python -m pytest -q`: **25 passed, 1 skipped**.
 - `python -m compileall -q blur_gs precompute_blur_flow.py train.py`: passed.
 - `python precompute_blur_flow.py --help`: passed.
 - `git diff --check`: passed (Git emitted only line-ending conversion notices).
@@ -19,6 +19,11 @@ flow-loss path with a synthetic depth provider and the precompute CLI with a
 stub estimator. Automatic startup tests exercise exact loader camera names,
 subprocess inference, cache reuse without weights, content-change invalidation,
 explicit baseline selection, and inference-failure propagation. The stub is explicit: it does not validate real model inference.
+
+Default como-mode tests check unchanged optimizer/gradient lifecycle across
+phase boundaries and exact zero-flow optimizer parity in a small CPU objective.
+The synthetic supervisor test verifies nonzero geometry and trajectory gradients
+in the first active flow step. These tests do not establish full-scene parity.
 
 ## Not yet executed
 
