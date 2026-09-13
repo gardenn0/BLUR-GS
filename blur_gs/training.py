@@ -1,4 +1,4 @@
-"""Opt-in training controller. With no flow_cache, upstream behavior is retained."""
+"""Training controller. train.py supplies the prepared cache unless --baseline is set."""
 from dataclasses import dataclass, asdict
 import torch
 from .cache import FlowCache

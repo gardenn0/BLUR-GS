@@ -22,6 +22,7 @@ import sys
 from scene import Scene, GaussianModel
 from scene.como_kernel import CoMoKernel
 from blur_gs.training import BlurConfig, BlurSupervisor, add_arguments, config_from_args
+from blur_gs.startup import add_startup_arguments, prepare_flow
 from blur_gs.checkpoint import make_checkpoint, restore_kernel, restore_rng_and_stack
 from utils.general_utils import safe_state
 from utils.visualization import Visualizer
@@ -57,12 +58,15 @@ def create_offset_gt(image, offset):
     image = torch.nn.functional.grid_sample(image[None], id_coords[None], align_corners=True, padding_mode="border")[0]
     return image
 
-def training(dataset, opt, pipe, comoopt, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, blur_config=None):
+def training(dataset, opt, pipe, comoopt, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, blur_config=None, startup_args=None):
     blur_config = blur_config or BlurConfig()
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+    prepare = (lambda cameras: prepare_flow(startup_args, blur_config, cameras, dataset.source_path)) if startup_args is not None else None
+    scene = Scene(dataset, gaussians, prepare_training_data=prepare)
+    global lpips_fn
+    lpips_fn = lpips.LPIPS(net="alex").cuda()
     gaussians.training_setup(opt)
 
     resume_state = None
@@ -71,7 +75,7 @@ def training(dataset, opt, pipe, comoopt, testing_iterations, saving_iterations,
         loaded = torch.load(checkpoint, weights_only=False)
         if isinstance(loaded, dict) and "blur_gs_version" in loaded:
             if not blur_config.enabled:
-                raise ValueError("Resuming BLUR-GS requires --flow_cache and matching BLUR-GS flags")
+                raise ValueError("Resuming BLUR-GS requires flow preparation and matching BLUR-GS flags")
             resume_state = loaded
             model_params, first_iter = loaded["gaussians"], loaded["iteration"]
         else:
@@ -390,6 +394,7 @@ if __name__ == "__main__":
     pp = PipelineParams(parser)
     cp = CoMoParams(parser)
     add_arguments(parser)
+    add_startup_arguments(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
@@ -406,12 +411,11 @@ if __name__ == "__main__":
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
-    lpips_fn = lpips.LPIPS(net='alex').cuda()
 
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), cp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, config_from_args(args))
+    training(lp.extract(args), op.extract(args), pp.extract(args), cp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, config_from_args(args), startup_args=args)
 
     # All done
     print("\nTraining complete.")

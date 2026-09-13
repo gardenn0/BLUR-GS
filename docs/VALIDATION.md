@@ -5,7 +5,7 @@ Date: 2026-09-13
 ## Executed locally
 
 - Windows, Python 3.12.14, PyTorch 2.6.0+cpu in a workspace-local virtualenv.
-- `python -m pytest -q`: **20 passed, 1 skipped**.
+- `python -m pytest -q`: **23 passed, 1 skipped**.
 - `python -m compileall -q blur_gs precompute_blur_flow.py train.py`: passed.
 - `python precompute_blur_flow.py --help`: passed.
 - `git diff --check`: passed (Git emitted only line-ending conversion notices).
@@ -16,7 +16,9 @@ synthetic depth optimization, pixel/crop/resize conventions, global sign
 selection, empty masks, occlusion rejection, cache validation, phase boundaries,
 and gradient clearing/freezing. Integration tests exercise the full supervisor
 flow-loss path with a synthetic depth provider and the precompute CLI with a
-stub estimator. The stub is explicit: it does not validate real model inference.
+stub estimator. Automatic startup tests exercise exact loader camera names,
+subprocess inference, cache reuse without weights, content-change invalidation,
+explicit baseline selection, and inference-failure propagation. The stub is explicit: it does not validate real model inference.
 
 ## Not yet executed
 

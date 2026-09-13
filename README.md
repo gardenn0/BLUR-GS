@@ -26,7 +26,8 @@ CoMoKernel -> exposure cameras                |
 
 ## What is implemented
 
-- Official Image-as-an-IMU checkpoint inference in a separate environment.
+- `train.py` automatically prepares and reuses frozen Image-as-an-IMU flow.
+- BLUR-GS is the default; `--baseline` explicitly selects original CoMoGaussian.
 - Crop/resize-aware flow caching, safe NPZ loading, missing-camera validation.
 - Normalized z-depth via an auxiliary `[z, 1, 0]` feature render; no raw CUDA
   distance-depth supervision and no CUDA source changes.
@@ -63,13 +64,14 @@ Use the same source data and SfM camera preparation as CoMoGaussian. Keep datase
 weights and generated caches outside Git. The inherited dependency pins are
 preserved; use the Python version specified above for those older packages.
 
-## 2. Precompute observations once
+## 2. Install the flow estimator once
 
 Install the official [Image-as-an-IMU](https://github.com/jerredchen/image-as-an-imu)
-in **its own environment**, and download its checkpoint from the author's README.
-No checkpoint or training data is included here.
+and obtain its official checkpoint. These are one-time dependencies, just like
+installing the rasterizer; model weights are not distributed in this repository.
+The existing CoMoGaussian environment can continue to run training.
 
-For example, outside the BLUR-GS repository:
+A separate estimator environment avoids changing CoMo's PyTorch dependencies:
 
 ```bash
 conda create -n image-as-imu python=3.10 -y
@@ -81,33 +83,54 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Then run from the BLUR-GS directory while that environment is active:
+In your training shell, configure its Python executable and checkpoint once
+(adjust these paths for your installation; they can be saved in a shell profile):
 
 ```bash
-python precompute_blur_flow.py \
-  --images /data/scene/images \
-  --checkpoint /models/image_as_imu.pth \
-  --output /data/scene/flow_cache
+export BLUR_GS_IAAI_PYTHON=/home/user/miniconda3/envs/image-as-imu/bin/python
+export BLUR_GS_IAAI_CHECKPOINT=/models/image_as_imu.pth
+conda activate blur-gs  # or your existing CoMoGaussian environment
 ```
 
-`--images` must be the actual reconstruction image directory, not the dataset
-root containing multiple scales or ground truth. The official inference's crop
-and 320x224 resize are recorded. CoMo may subsequently downsample these images.
-For Blender/transform-JSON datasets use `--name-mode stem`; default `colmap`
-matches CoMo's first-dot filename splitting. Duplicate image names are rejected.
-The estimator is frozen; only flow is consumed. No exposure time is required.
+`BLUR_GS_IAAI_ROOT` is optional when the package was installed with `pip install -e`.
+Alternatively supply `--iaai_python`, `--iaai_checkpoint`, and `--iaai_root` to
+`train.py`. Without overrides, inference uses the current Python and looks for
+`checkpoints/image_as_imu.pth` relative to the working directory. Using the same
+environment requires that the official estimator dependencies are compatible;
+this combination has not been validated.
 
-## 3. Train
-
-### Unmodified RGB baseline
-
-Omit `--flow_cache` to use the original CoMoGaussian training behavior:
+## 3. Train with one command
 
 ```bash
-python train.py -s /data/scene -m output/baseline --eval -r 1
+python train.py -s /data/scene -m output/blur_gs --eval -r 1
 ```
 
-Use `-r 4` for CoMo's real Deblur-NeRF data as in its original instructions.
+BLUR-GS is now the default. `train.py` takes the exact training images selected
+by CoMo's data loader, generates their flow automatically if needed, releases
+the estimator process, and starts reconstruction training. No manual precompute
+command is needed. Use `-r 4` for CoMo's real Deblur-NeRF data as upstream directs.
+
+Automatic caches live under `/data/scene/flow_cache/<image-content-signature>`.
+Changed image contents or training splits select a new cache. Existing caches
+are checked for missing/corrupt observations; a supplied checkpoint must match
+the cache checkpoint hash. A different checkpoint requires a fresh
+`--flow_cache /path/to/new/cache`. Cached runs need no estimator environment or
+checkpoint. An explicit existing `--flow_cache` is treated as a user-supplied
+observation set; ensure it corresponds to the current images.
+Missing dependencies or failed inference stop training with an error; they do
+not silently disable BLUR-GS. The dataset must be writable for the default
+cache; use `--flow_cache` to choose another location if needed.
+
+### Original CoMoGaussian baseline
+
+```bash
+python train.py -s /data/scene -m output/baseline --eval -r 1 --baseline
+```
+
+Migration: previously omitting `--flow_cache` selected the baseline. Add
+`--baseline` to old baseline commands. It cannot be combined with `--flow_cache`.
+The standalone `precompute_blur_flow.py` remains available for optional offline
+preparation, but is no longer required in the normal training workflow.
 
 ### BLUR-GS: trajectory prior followed by alternating refinement
 

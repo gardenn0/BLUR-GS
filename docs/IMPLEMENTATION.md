@@ -5,7 +5,12 @@
 `scene/como_kernel.py`, `gaussian_renderer/__init__.py`, Gaussian representation,
 and all CUDA sources are unchanged from the pinned CoMoGaussian commit. RGB
 rendering, exposure weighting/masking, and original regularizers are retained.
-The existing `train.py` has opt-in hooks; omitting `--flow_cache` disables them.
+`train.py` enables BLUR-GS by default and prepares flow before allocating scene
+cameras/Gaussians on the GPU. `--baseline` explicitly disables flow supervision.
+The loader passes its exact training CameraInfo paths/names to the preparation
+callback, including its resolution suffix and dataset split. The estimator runs
+in a subprocess using the current Python or `--iaai_python`, then exits before
+reconstruction. Content-addressed automatic caches are validated and reused.
 
 ## Observed motion
 

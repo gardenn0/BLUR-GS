@@ -15,7 +15,9 @@ from blur_gs.cache import iaai_crop
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--images", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--images", type=Path)
+    inputs.add_argument("--image-list", type=Path, help="JSON list of exact camera name/path pairs from train.py")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--iaai-root", type=Path, help="Path to official image-as-an-imu checkout")
@@ -31,10 +33,15 @@ def main():
         sys.path.insert(0, str(args.iaai_root.resolve()))
     from iaai.model import Blur2PoseSegNeXtBackbone
 
-    paths = sorted(p for p in args.images.rglob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    if args.image_list:
+        records = json.loads(args.image_list.read_text(encoding="utf-8"))
+        paths = [Path(item["path"]) for item in records]
+        names = [item["name"] for item in records]
+    else:
+        paths = sorted(p for p in args.images.rglob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+        names = [p.name.split(".")[0] if args.name_mode == "colmap" else p.stem for p in paths]
     if not paths:
         parser.error("No images found")
-    names = [p.name.split(".")[0] if args.name_mode == "colmap" else p.stem for p in paths]
     if len(set(names)) != len(names):
         parser.error("Duplicate camera names; supply only the actual source image directory")
     if (args.output / "manifest.json").exists() and not args.overwrite:
@@ -73,7 +80,7 @@ def main():
             filename = hashlib.sha256(name.encode()).hexdigest() + ".npz"
             np.savez_compressed(args.output / filename, flow=flow, mask=mask)
             manifest["images"][name] = dict(file=filename, crop=crop,
-                                           source=path.relative_to(args.images).as_posix())
+                                           source=str(path) if args.image_list else path.relative_to(args.images).as_posix())
             print(f"[{index + 1}/{len(paths)}] {name}")
     temporary = args.output / "manifest.json.tmp"
     temporary.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

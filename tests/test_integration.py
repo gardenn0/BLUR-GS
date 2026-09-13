@@ -87,3 +87,71 @@ class Blur2PoseSegNeXtBackbone(torch.nn.Module):
     flow, mask, crop = FlowCache(output, ["frame"]).get("frame", "cpu")
     assert flow.shape == (2, 224, 320) and flow.mean() == 1
     assert crop["top"] == 16 and mask[0].sum() == 0
+
+
+def test_train_startup_generates_and_reuses_flow(tmp_path, monkeypatch):
+    from blur_gs.startup import prepare_flow
+    import blur_gs.startup as startup
+    package = tmp_path / "stub" / "iaai"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "model.py").write_text("import torch\nclass Blur2PoseSegNeXtBackbone(torch.nn.Module):\n    def __init__(self, **kwargs):\n        super().__init__()\n    def infer(self, data):\n        return {'flow_field': torch.ones(1, 2, 224, 320)}\n")
+    path = tmp_path / "actual.training.image.png"
+    Image.new("RGB", (640, 480)).save(path)
+    checkpoint = tmp_path / "checkpoint.pth"
+    torch.save({}, checkpoint)
+    args = SimpleNamespace(baseline=False, iaai_python=sys.executable,
+                           iaai_root=str(package.parent), iaai_checkpoint=str(checkpoint), iaai_device="cpu")
+    cameras = [SimpleNamespace(image_name="loader-selected-name", image_path=str(path))]
+    config = BlurConfig()
+    prepare_flow(args, config, cameras, tmp_path)
+    assert config.enabled
+    FlowCache(config.flow_cache, ["loader-selected-name"]).get("loader-selected-name", "cpu")
+    first_cache = config.flow_cache
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("Cache reuse should not run inference")
+    monkeypatch.setattr(startup.subprocess, "run", must_not_run)
+    checkpoint.unlink()  # Cached runs require no estimator or weights.
+    config = BlurConfig()
+    prepare_flow(args, config, cameras, tmp_path)
+    assert config.flow_cache == first_cache
+    Image.new("RGB", (640, 480), "red").save(path)
+    import pytest
+    with pytest.raises(FileNotFoundError, match="first run"):
+        prepare_flow(args, BlurConfig(), cameras, tmp_path)
+
+
+def test_train_startup_baseline_is_explicit(tmp_path):
+    import pytest
+    from blur_gs.startup import prepare_flow, add_startup_arguments
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    add_startup_arguments(parser)
+    args = parser.parse_args([])
+    assert not args.baseline
+    args.baseline = True
+    config = BlurConfig()
+    prepare_flow(args, config, [], tmp_path)
+    assert not config.enabled
+    with pytest.raises(ValueError, match="cannot be combined"):
+        prepare_flow(args, BlurConfig(flow_cache="existing"), [], tmp_path)
+
+
+def test_startup_inference_failure_does_not_enable_training(tmp_path, monkeypatch):
+    import pytest
+    import blur_gs.startup as startup
+    image = tmp_path / "a.png"
+    Image.new("RGB", (32, 32)).save(image)
+    checkpoint = tmp_path / "weights.pth"
+    torch.save({}, checkpoint)
+    args = SimpleNamespace(baseline=False, iaai_python=sys.executable, iaai_root="",
+                           iaai_checkpoint=str(checkpoint), iaai_device="cpu")
+    cameras = [SimpleNamespace(image_name="a", image_path=str(image))]
+    def fail(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command)
+    monkeypatch.setattr(startup.subprocess, "run", fail)
+    config = BlurConfig()
+    with pytest.raises(subprocess.CalledProcessError):
+        startup.prepare_flow(args, config, cameras, tmp_path)
+    assert not config.enabled
+    assert not list((tmp_path / "flow_cache").rglob("manifest.json"))
