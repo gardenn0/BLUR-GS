@@ -5,7 +5,7 @@ Date: 2026-09-13
 ## Executed locally
 
 - Windows, Python 3.12.14, PyTorch 2.6.0+cpu in a workspace-local virtualenv.
-- `python -m pytest -q`: **25 passed, 1 skipped**.
+- `python -m pytest -q`: **28 passed, 1 skipped**.
 - `python -m compileall -q blur_gs precompute_blur_flow.py train.py`: passed.
 - `python precompute_blur_flow.py --help`: passed.
 - `git diff --check`: passed (Git emitted only line-ending conversion notices).
@@ -24,6 +24,10 @@ Default como-mode tests check unchanged optimizer/gradient lifecycle across
 phase boundaries and exact zero-flow optimizer parity in a small CPU objective.
 The synthetic supervisor test verifies nonzero geometry and trajectory gradients
 in the first active flow step. These tests do not establish full-scene parity.
+
+Flow-diagnostic tests verify known EPE, common masks, empty-support handling,
+direction preservation, source dimensions, and CPU CLI output with/without GT.
+Diagnostic visual QA uses an explicitly synthetic fixture, not actual IAAI flow.
 
 ## Not yet executed
 

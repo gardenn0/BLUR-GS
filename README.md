@@ -242,6 +242,82 @@ Additional controls:
 | `--flow_occlusion_tolerance` | 0.1 | Relative depth agreement; <=0 disables this check |
 | `--flow_min_valid_fraction` | 0.05 | Skip flow loss below this valid coverage |
 
+## Inspect Image-as-an-IMU flow
+
+A **flow cache** is the saved prediction for each input image (`.npz` files and
+`manifest.json`), not ground-truth flow. `train.py` generates it automatically.
+You can inspect it without a CUDA renderer or loading the estimator again:
+
+```bash
+python inspect_blur_flow.py -m output/blur_gs --output output/flow_diagnostics
+```
+
+This reads the cache path recorded in `blur_gs_config.json`. If preparation has
+finished but that config has not yet been written, use the cache directory
+printed by `train.py` (the directory containing `manifest.json`):
+
+```bash
+python inspect_blur_flow.py --flow_cache /data/scene/flow_cache/ACTUAL_ID \
+  --output output/flow_diagnostics --limit 12
+```
+
+Each PNG sheet shows input/crop, cropped network input, flow arrows, direction
+colors, magnitude, and the cache mask. `summary.csv` and `report.json` contain
+image names, output filenames, magnitude statistics, and mask coverage.
+`--limit 0` exports all images; the default selects up to 12 evenly spaced
+images in sorted name order. These reports summarize only exported images.
+
+Arrow lengths use `--arrow_scale 2` for visibility, not a change to flow data.
+Direction colors use hue with +x to the right and +y downward (right=red,
+down=yellow-green, left=cyan, up=violet). Brightness encodes magnitude, with a
+shared `--max_flow 20` network-pixel scale across images. Yellow on the magnitude
+map means at least that maximum; use a larger scale for severe blur. Gray marks
+invalid pixels. The mask is **validity, not learned confidence**, and does not
+include the later GS depth/occlusion mask. The displayed RGB crop uses Pillow
+for visualization; inference itself retains official tensor preprocessing.
+If image paths changed, supply `--images /actual/reconstruction/image/directory`.
+Use `--flow_cache` instead of `-m` if the recorded cache path also changed.
+
+### What constitutes an accuracy measurement?
+
+Without independent ground truth, direction/magnitude images are diagnostics,
+not an accuracy percentage. Look for grossly inconsistent directions, unusually
+large/near-zero flow, and disagreement with visible blur orientation. Visible
+blur streak length need not equal endpoint displacement for curved/reversing
+motion. A low BLUR-GS flow loss also does not prove correct flow: the scene is
+being trained to agree with that same prediction.
+
+With real ground-truth intra-exposure flow, use:
+
+```bash
+python inspect_blur_flow.py --flow_cache /data/prediction_cache \
+  --gt_cache /data/aligned_ground_truth_cache --images /data/scene/images_1 \
+  --limit 0 --output output/flow_accuracy
+```
+
+GT must use the same cache schema (version 1, units `network_pixels`, matching
+camera names, `.npz` with `flow` shaped 2xHxW and `mask` HxW, and crop metadata).
+Crop and grid must match exactly. Flow vectors must be expressed in that grid's
+pixel units; resizing GT needs both spatial resampling and displacement scaling.
+Masks must exclude undefined flow and values must be finite. This tool does not
+convert arbitrary benchmark files or derive GT from sharp RGB automatically.
+
+It reports mean endpoint error (EPE) per image on pixels where both masks are
+positive, plus GT flow and an error map (`--max_error 5` sets the shared scale).
+Empty common support gives no EPE, not zero. Predictions and GT are compared in
+the supplied direction; no automatic sign flip or reverse-flow approximation is
+applied. Single-image time direction is ambiguous, as the
+[official model documentation](https://github.com/jerredchen/image-as-an-imu#getting-started)
+notes; establish a consistent evaluation convention before interpreting EPE.
+Inter-frame flow from a separate estimator is not automatically ground truth for
+intra-exposure blur flow. Independently known camera trajectories/depth or a
+controlled synthetic sequence can provide a reference, with matching visibility
+and exposure conventions.
+
+Finally, compare held-out BLUR-GS/CoMoGaussian reconstruction metrics to test
+whether the prior helps the downstream task. That measures usefulness, not
+independent Image-as-an-IMU flow accuracy.
+
 ## 4. Resume and evaluate
 
 Saving iterations also produce `blur_chkpntITER.pth`. Resume with the **same
