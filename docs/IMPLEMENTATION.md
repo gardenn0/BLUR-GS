@@ -101,6 +101,13 @@ weight ramps for 2000 iterations. geometry_start/alternate_every and the separat
 geometry_flow_weight are unused by this mode. Zero flow weight bypasses the
 auxiliary render and flow computation. RGB terms remain unchanged.
 
+`flow_mode=joint_alternating` matches como through geometry_start, including
+optimizer/zero-grad timing and joint flow gradients after flow_start. It then
+enters the existing alternating freeze schedule, starting with trajectory steps.
+Its ramp runs from flow_start without restarting. The joint/trajectory phases
+use flow_weight and geometry-only phases use geometry_flow_weight. The mode is
+saved and checked by the existing checkpoint configuration mechanism.
+
 Legacy modes remain explicit ablations: `trajectory` keeps trajectory_prior;
 `joint` uses trajectory_prior until geometry_start then joint;
 `alternating` uses trajectory_prior until geometry_start, then alternates

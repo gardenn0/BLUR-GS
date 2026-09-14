@@ -31,7 +31,7 @@ def add_arguments(parser):
     for name, value in asdict(BlurConfig()).items():
         kwargs = dict(default=value, type=type(value))
         if name == "flow_mode":
-            kwargs["choices"] = ("como", "trajectory", "alternating", "joint")
+            kwargs["choices"] = ("como", "trajectory", "alternating", "joint", "joint_alternating")
         if name == "flow_direction":
             kwargs["choices"] = ("auto", "forward", "backward")
         group.add_argument("--" + name, **kwargs)
@@ -46,8 +46,10 @@ def phase_at(iteration, config):
         return "baseline"
     if config.flow_mode == "como":
         return "joint"
-    if config.flow_mode == "trajectory" or iteration <= config.geometry_start:
+    if config.flow_mode == "trajectory":
         return "trajectory_prior"
+    if iteration <= config.geometry_start:
+        return "joint" if config.flow_mode == "joint_alternating" else "trajectory_prior"
     if config.flow_mode == "joint":
         return "joint"
     block = (iteration - config.geometry_start - 1) // config.alternate_every
@@ -66,7 +68,7 @@ class BlurSupervisor:
         if config.enabled:
             if config.flow_start < start_warp:
                 raise ValueError("Require start_warp <= flow_start")
-            if config.flow_mode in ("alternating", "joint") and config.geometry_start < config.flow_start:
+            if config.flow_mode in ("alternating", "joint", "joint_alternating") and config.geometry_start < config.flow_start:
                 raise ValueError("Require flow_start <= geometry_start in staged modes")
             if config.alternate_every < 1 or config.flow_ramp < 0:
                 raise ValueError("Invalid alternation/ramp length")
@@ -81,9 +83,11 @@ class BlurSupervisor:
         self.phase = phase_at(iteration, self.config)
         self.update_geometry = self.phase != "trajectory"
         self.update_kernel = self.phase != "geometry"
-        # In como mode, train.py retains upstream zero_grad/step timing and
-        # parameter trainability. Only legacy schedules need freeze management.
-        if self.config.enabled and self.config.flow_mode != "como":
+        # Match como exactly before joint_alternating enters its freeze schedule.
+        # Frozen groups and stale gradients must be reset during alternation.
+        manage_freeze = self.config.flow_mode != "como" and not (
+            self.config.flow_mode == "joint_alternating" and iteration <= self.config.geometry_start)
+        if self.config.enabled and manage_freeze:
             gaussians.optimizer.zero_grad(set_to_none=True)
             kernel.optimizer.zero_grad(set_to_none=True)
             set_optimizer_grad(gaussians.optimizer, self.update_geometry)

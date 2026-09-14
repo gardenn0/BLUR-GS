@@ -48,7 +48,7 @@ def test_supervisor_routes_loss_in_all_phases(tmp_path, monkeypatch):
         d = (z if geometry_grad else z.detach()).expand(1, 16, 24)
         return d, torch.ones_like(d), torch.ones_like(d, dtype=torch.bool)
     monkeypatch.setattr(training, "render_z_depth", depth_stub)
-    for mode, step, expected_geometry, expected_kernel in [("alternating", 1, False, True), ("alternating", 3, False, True), ("alternating", 4, True, False), ("como", 1, True, True)]:
+    for mode, step, expected_geometry, expected_kernel in [("alternating", 1, False, True), ("alternating", 3, False, True), ("alternating", 4, True, False), ("como", 1, True, True), ("joint_alternating", 1, True, True), ("joint_alternating", 2, True, True), ("joint_alternating", 3, False, True), ("joint_alternating", 4, True, False)]:
         cfg.flow_mode = mode
         # Mimic normal optimizer cleanup and fresh-run trainability for each case.
         z.requires_grad_(True)

@@ -48,9 +48,10 @@ def test_schedule_boundaries():
     assert phase_at(100, BlurConfig(flow_cache="c", flow_mode="trajectory", flow_start=0)) == "trajectory_prior"
 
 
-def test_phase_switch_clears_grads_and_freezes_correct_group(tmp_path):
+@pytest.mark.parametrize("mode", ["alternating", "joint_alternating"])
+def test_phase_switch_clears_grads_and_freezes_correct_group(tmp_path, mode):
     make_cache(tmp_path)
-    cfg = BlurConfig(flow_cache=str(tmp_path), flow_start=0, geometry_start=1, alternate_every=1, flow_mode="alternating")
+    cfg = BlurConfig(flow_cache=str(tmp_path), flow_start=0, geometry_start=1, alternate_every=1, flow_mode=mode)
     supervisor = BlurSupervisor(cfg, [SimpleNamespace(image_name="a")], start_warp=0)
     gp, kp = torch.nn.Parameter(torch.tensor(1.)), torch.nn.Parameter(torch.tensor(1.))
     g = SimpleNamespace(optimizer=torch.optim.Adam([gp]))
@@ -105,3 +106,36 @@ def test_como_zero_weight_matches_baseline_optimizer_updates(tmp_path):
                 k.optimizer.zero_grad()
         return torch.stack([gp.detach(), kp.detach()])
     assert torch.equal(run(baseline), run(controlled))
+
+
+def test_joint_alternating_boundaries_and_cli(tmp_path):
+    from argparse import ArgumentParser
+    from blur_gs.training import add_arguments, config_from_args
+    parser = ArgumentParser()
+    add_arguments(parser)
+    config = config_from_args(parser.parse_args(["--flow_mode", "joint_alternating",
+                                                "--flow_cache", str(tmp_path)]))
+    assert [phase_at(i, config) for i in (4000, 4001, 20000, 20001, 20050, 20051, 20100, 20101)] == [
+        "baseline", "joint", "joint", "trajectory", "trajectory", "geometry", "geometry", "trajectory"]
+    config.geometry_start = 3999
+    with pytest.raises(ValueError, match="flow_start <= geometry_start"):
+        BlurSupervisor(config, [], start_warp=1000)
+
+
+def test_joint_alternating_early_schedule_matches_como(tmp_path):
+    make_cache(tmp_path)
+    config = BlurConfig(flow_cache=str(tmp_path), flow_mode="joint_alternating")
+    supervisor = BlurSupervisor(config, [SimpleNamespace(image_name="a")], 1000)
+    gp, kp = torch.nn.Parameter(torch.tensor(1.)), torch.nn.Parameter(torch.tensor(1.))
+    g = SimpleNamespace(optimizer=torch.optim.Adam([gp]))
+    k = SimpleNamespace(optimizer=torch.optim.Adam([kp]))
+    for iteration in (1, 4000, 4001, 19999, 20000):
+        gp.grad, kp.grad = torch.ones_like(gp), torch.ones_like(kp)
+        supervisor.begin(iteration, g, k)
+        assert supervisor.update_geometry and supervisor.update_kernel
+        assert gp.requires_grad and kp.requires_grad
+        assert gp.grad.item() == kp.grad.item() == 1
+        assert supervisor.phase == phase_at(iteration, BlurConfig(flow_cache="cache"))
+    supervisor.begin(20001, g, k)
+    assert not gp.requires_grad and kp.requires_grad
+    assert gp.grad is None and kp.grad is None

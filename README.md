@@ -212,6 +212,33 @@ raw loss, selected direction, valid fraction, skipped loss and effective weight.
 If most flow steps are skipped, inspect depth/alpha, coordinate alignment and
 domain mismatch; a zero loss under no valid pixels is not evidence of success.
 
+### Joint flow supervision followed by alternating refinement
+
+`--flow_mode joint_alternating` matches `como` through `geometry_start`:
+RGB and flow supervise both Gaussians and trajectory after `flow_start`, with
+upstream optimizer timing and no freezes. After `geometry_start`, it uses the
+same alternating schedule as `alternating`, starting with trajectory updates.
+The existing `alternating` mode retains its trajectory-only flow warm-up.
+
+| Iterations (defaults) | `alternating` | `joint_alternating` |
+|---|---|---|
+| 1-4000 | Original CoMo losses | Original CoMo losses |
+| 4001-20000 | RGB to both; flow to trajectory only | RGB and flow to both |
+| 20001 onward | 50 trajectory / 50 geometry steps | 50 trajectory / 50 geometry steps |
+
+```bash
+python train.py -s /data/scene -m output/joint_alternating --eval -r 1 \
+  --flow_mode joint_alternating --flow_weight 0.01 --geometry_flow_weight 0.01 \
+  --flow_start 4000 --flow_ramp 2000 --geometry_start 20000 --alternate_every 50
+```
+
+During the early joint phase and later trajectory phases, `flow_weight` applies;
+geometry-only phases use `geometry_flow_weight`. The ramp is not restarted at
+the switch. Auxiliary depth camera-gradient blocking remains unchanged.
+Use a fresh output directory for this comparison. Resume only with the same
+mode and schedule recorded in the checkpoint. This schedule is experimental;
+no quality improvement is guaranteed.
+
 ### Legacy schedule ablations
 
 These explicitly change gradient routing or update schedules and should be
