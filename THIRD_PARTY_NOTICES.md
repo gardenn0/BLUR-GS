@@ -1,20 +1,5 @@
 # Attribution and license scope
 
-## Standalone BAD-style path
-
-`bad_blur_gs/trajectory.py` adapts interpolation equations/structure from
-WU-CVGL/BAD-Gaussians, commit `bdd8b3e2ba068aa7be8e3ab6fb5277abd40909bc`
-(Lingzhe Zhao, Peng Wang, Peidong Liu; ECCV 2024), licensed Apache-2.0.
-`bad_blur_gs/gaussians.py` adapts initialization/refinement from Nerfstudio v1.0.3
-`splatfacto.py`, copyright 2022 the Regents of the University of California,
-Nerfstudio Team and contributors, licensed Apache-2.0. Both are modified to run
-without Nerfstudio. The license is in `third_party/licenses/APACHE-2.0.txt`.
-`bad_blur_gs/colmap_io.py` copies this repository's inherited Inria COLMAP reader
-with its original research-use notice. Those terms continue to apply.
-`gsplat` and `pypose` are installed dependencies, not vendored binaries. See
-`docs/BAD_BLUR_GS.md` for implementation deviations and references. The standalone
-port is not an official BAD-Gaussians release or a new-method novelty claim.
-
 This is an experimental implementation of BLUR-GS, based on **CoMoGaussian** by
 Jungho Lee et al. (ICCV 2025). It is not an official implementation by the authors
 of CoMoGaussian or Image as an IMU, and no benchmark improvement is claimed.

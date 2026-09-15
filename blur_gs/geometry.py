@@ -8,10 +8,6 @@ import torch.nn.functional as F
 
 
 def camera_intrinsics(camera):
-    # Standalone BAD port carries full pixel-center intrinsics, including principal
-    # point and crop/downscale transforms. Legacy CoMo cameras retain their path.
-    if hasattr(camera, "K"):
-        return camera.K
     ref = camera.world_view_transform
     w, h = camera.image_width, camera.image_height
     return ref.new_tensor([[camera.focal_x, 0, (w - 1) / 2],
