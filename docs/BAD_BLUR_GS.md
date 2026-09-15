@@ -1,10 +1,15 @@
-# BAD-BLUR-GS: standalone 3DGS port
+# BAD-BLUR-GS: BAD-aligned standalone 3DGS port (v2)
 
 This is a **BAD-style reimplementation**, not the official BAD-Gaussians code or
 a claim of reproducing its published scores. `train_bad.py` uses standard 3DGS
 means, SH colors, log scales, quaternions and opacity, with a plain PyTorch loop.
 There is no Nerfstudio runtime, CoMoKernel, Neural ODE, learned pixel weighting,
-blur mask, or 3D smoothing filter. The separate `train.py` remains CoMo-based.
+blur mask, or 3D smoothing filter. This document is for the `bad-blur-gs` branch;
+the `main` branch remains CoMo-based.
+
+Version 2 aligns the legacy renderer and default DeblurNerf/COLMAP coordinate
+pipeline with the pinned upstream sources. It replaces the initial gsplat 1.5.3 /
+train-centers-only implementation. **Do not resume v1 checkpoints with this code.**
 
 ## Install
 
@@ -13,13 +18,16 @@ Use a separate environment so the existing CoMo experiments remain reproducible:
 ```bash
 conda create -n bad-blur-gs python=3.10 -y
 conda activate bad-blur-gs
-pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements-bad.txt
 ```
 
-Use a PyTorch CUDA build compatible with your driver and locally installed CUDA
-toolkit. `gsplat==1.5.3` builds CUDA kernels on first use and requires a working
-C++/CUDA compiler. **Do not install the CoMo rasterizer/simple-knn for this path.**
+This pins the torch/torchvision pair recommended in the official BAD README.
+Use a compatible NVIDIA driver and CUDA 11.8 toolkit with a working C++ compiler.
+`gsplat==0.1.11` is pinned within BAD's declared `>=0.1.11,<1.0.0` range;
+upstream does not identify a single exact release for all published results.
+Its CUDA extension must compile/install successfully. **Do not install the CoMo
+rasterizer/simple-knn for this path.** Do not upgrade gsplat to 1.x.
 An environment with those extensions is not sufficient unless gsplat and the
 new requirements are also installed.
 
@@ -59,21 +67,34 @@ IAAI runs automatically for nonzero flow, before allocating the reconstruction
 scene on the GPU; compatible existing caches are reused. Cache observations use
 training images only, not held-out views. `--flow_cache` accepts an existing
 validated cache. `inspect_blur_flow.py -m /outputs/bad_blur_gs/blurfactory` works.
+An old cache can be reused only when its image names, source pixel data and
+crop/resize conventions still match; reconstruction checkpoints cannot.
 
 No implicit data download, new COLMAP reconstruction, GT pose substitution, or
 test-view pose optimization takes place. Input is an undistorted COLMAP scene
 (`sparse/0` binary or text and images). `images` is preferred; if absent, `images_1`
 is used. `-i images_1` selects explicitly. Resolution `-r 1/2/4/8` downscales those
-actual source images, not a different dataset version. Other formats and nonzero
-lens distortion are rejected. Sorted images at indices 0,8,16,... are held out.
+source images using precomputed `images_2/4/8` (or `<selected-folder>_2/4/8`),
+as the official parser does. Missing downscaled folders raise an error; no
+alternative resize kernel or new data is silently substituted. Use `-r 1` if
+only originals exist. Sorted images at indices 0,8,16,... are held out; a single
+`hold=N` file overrides the interval, matching BAD. Nonzero distortion,
+`images_test` restoration and list-based splits are rejected: these require
+the official data pipeline and are outside this port's LLFF interval protocol.
+BAD's first-image principal-point correction is applied per split; if corrected
+calibration still disagrees with pixel dimensions, fix the input rather than
+silently rescaling it another way.
 
 ## Pipeline
 
-1. Read the original COLMAP points/intrinsics/poses, split train/test, and record
-   content hashes and a single coordinate normalization for exact resume checks.
+1. Read original COLMAP points/intrinsics/poses. Convert camera axes to OpenGL
+   and world axes to Nerfstudio, orient average up to +Z, center using ALL poses,
+   and scale the maximum absolute camera-center coordinate to 0.25. Only then
+   split train/test. Transform points with the same recorded world transform.
 2. Prepare/reuse frozen IAAI flow. No fine-tuning is performed.
-3. Initialize vanilla 3DGS parameters and two (linear) or four (cubic) local pose
-   controls per training image.
+3. Initialize vanilla 3DGS parameters and two (linear) or four (cubic) local
+   OpenGL-frame pose controls per training image, exactly as in BAD. Convert
+   sampled poses to OpenCV only at the renderer/shared-flow adapter boundary.
 4. Sample ten poses including exposure endpoints, render each, average RGB.
 5. Compute BAD-style L1 + SSIM + scheduled scale regularization.
 6. After flow warmup, render endpoint alpha-normalized z-depth with detached
@@ -94,7 +115,7 @@ upstream real-scene commands sometimes override them.
 | Training length | 30,001 optimizer iterations; zero-based steps **0..30000** |
 | Exposure trajectory | Linear translation + SO(3) interpolation; optional cumulative cubic rotation spline |
 | Virtual views | 10, uniformly spaced including t=0 and t=1 |
-| Pose composition | COLMAP c2w multiplied by local learned SE(3) delta |
+| Pose composition | Normalized OpenGL c2w multiplied by local learned SE(3) delta |
 | Initial controls | Nonzero se(3) noise, standard deviation 1e-5 |
 | Blur integration | Mean of ten clipped RGB renders |
 | RGB loss | 0.8 L1 + 0.2 (1-SSIM), pytorch-msssim SSIM |
@@ -125,18 +146,28 @@ upstream real-scene commands sometimes override them.
 Learning-rate calls preserve the upstream scheduler-after-step convention.
 The flow schedule is an added BLUR-GS choice, not an official BAD parameter.
 
-## Differences that matter for comparison
+## Aligned components and remaining comparison limits
 
-- **Renderer:** gsplat **1.5.3**, rather than upstream gsplat 0.x. We preserve
-  antialiased EWA splatting and epsilon 0.3, but do not claim numerical or gradient
-  equivalence between renderer versions. No CoMo smoothing kernel is used.
-- **Coordinates/data:** COLMAP rotations and intrinsics are preserved, including
-  off-center principal points. A documented translation/scale normalization uses
-  training camera centers (max absolute centered coordinate becomes 0.25).
-  Upstream Nerfstudio also auto-orients/centers its data; that exact parser is not
-  reproduced here. The same normalization is applied to points and camera centers.
-  The inverse is recorded in `bad_config.json`. Never compare to an upstream run
-  that uses a different re-rendered synthetic dataset or different COLMAP inputs.
+- **Renderer aligned:** gsplat **0.1.11**, calling `project_gaussians`,
+  `spherical_harmonics`, and `rasterize_gaussians` in BAD's order. Same analytic
+  view-matrix inverse, block width 16, default projection cutoff, normalized
+  quaternions, detached SH view directions, antialias compensation multiplying
+  opacity, and RGB clamp. No CoMo smoothing filter or custom pose-backward patch.
+  **Legacy gsplat approximates camera-rotation derivatives.** This is deliberately
+  retained to match the selected official backend; a general exact rotation
+  finite-difference test would incorrectly demand a different algorithm.
+- **Coordinates aligned:** default BAD DeblurNerf parser with Nerfstudio v1.0.3:
+  COLMAP-to-OpenGL camera axes, COLMAP world-axis transform, up orientation,
+  mean-pose centering, auto scaling and scale factor 0.25, BEFORE splitting.
+  Geometry and cameras use the same transform. `bad_config.json` stores a 3x4
+  `transform` and `scale`: normalized point = scale * (R * original point + t).
+  Camera adapters expose OpenCV poses; optimization controls remain OpenGL.
+  Non-default orientation/centering modes are not exposed in this port.
+  Camera metadata from heldout views participates as in BAD; heldout image
+  content is never used for flow or reconstruction training.
+- **Input identity:** use the same actual images, COLMAP reconstruction, split,
+  resolution and seed in the official and port runs. In particular, the original
+  Deblur-NeRF data and BAD's re-rendered data are different experiments.
 - **Gaussian initialization:** BAD-style mean three-neighbor distance and random
   unit quaternions, computed with SciPy KDTree; no `simple-knn` extension.
 - **Evaluation:** held-out input poses stay fixed. PSNR uses unquantized [0,1]
@@ -146,9 +177,12 @@ The flow schedule is an added BLUR-GS choice, not an official BAD parameter.
 - **Auxiliary depth:** separate [z,1,0] feature render, normalized by alpha from
   that same render, with the same antialiasing. Never use exposure-averaged alpha
   to normalize an endpoint depth. No clamp-to-one is applied to depth features.
-- **Scope:** the original PyTorch 3DGS program structure/representation is kept,
-  while gsplat supplies a differentiable CUDA rasterizer. This is not the untouched
-  original Inria rasterizer or a bit-exact reproduction of official BAD.
+- **Scope:** standard 3DGS parameter representation and an independent training
+  loop, without the full Nerfstudio runtime. Renderer/config alignment does not
+  by itself prove identical complete runs: RNG consumption, data caching and
+  evaluation scheduling differ from a full Nerfstudio process. The unchanged
+  scale/refinement schedule is described above. Test rendering at heldout poses
+  and the evaluation metric conventions remain explicit choices of this port.
 
 Use this port's `--baseline` as the **primary ablation control**. Official BAD and
 CoMo scores remain external references. Changes of renderer/parser/trajectory and
@@ -164,11 +198,12 @@ python render_bad.py -m /outputs/bad_blur_gs/blurfactory \
   --checkpoint /outputs/bad_blur_gs/blurfactory/bad_chkpnt30000.pth
 ```
 
-Checkpoints include Gaussians, both optimizers, controls/base poses, partially
+Version-2 checkpoints include Gaussians, both optimizers, controls/base poses, partially
 accumulated camera gradients, refinement statistics, camera-sampling stack and
 Python/NumPy/CPU/CUDA RNG states. Changing data, calibration, flow observations,
 baseline status or training settings on resume is rejected. Load only trusted
-checkpoints. CoMo and Gaussian-only checkpoints are not compatible.
+checkpoints. CoMo, Gaussian-only and v1 BAD-port checkpoints are not compatible.
+Restart baseline and flow comparisons together in new output directories.
 
 Outputs: TensorBoard, per-view and mean `metrics.json`, test renders/GT/errors,
 standard Gaussian `point_cloud.ply`, and full `bad_chkpnt*.pth`. `render_bad.py`
@@ -178,12 +213,23 @@ does not encode antialiasing metadata; use the supplied renderer for comparisons
 
 ## Validation
 
-Implementation validation on 2026-09-15: **43 CPU tests passed** (four CUDA tests
-excluded across the repository). A local CUDA run was attempted with PyTorch
-2.6.0+cu126 and an RTX 3060, but Windows Device Guard blocked `cudafe++.exe` while
-building gsplat. Consequently, **actual CUDA rendering/training has not yet been
-validated**, and no Deblur-NeRF benchmark result is claimed. Run the CUDA tests
-on the Linux training server before launching long experiments:
+2026-09-16 local result: **55 CPU tests passed**; six CUDA-marked tests across
+the repository were excluded. The CI CPU job uses the pinned torch 2.1.2 stack.
+
+The alignment tests include unmodified coordinate helper bodies extracted from
+Nerfstudio v1.0.3, plus an independent single-view transcription of BAD's render
+calls. CPU tests compare all-pose transforms/points, OpenGL delta composition,
+calibration correction, split/resize behavior, renderer call arguments and
+autograd routing. CPU renderer comparisons use a clearly labeled test stand-in;
+they are NOT actual CUDA kernel tests.
+
+CUDA tests compare the port and the upstream-style render sequence using the
+same real gsplat 0.1.11 backend: RGB, alpha, loss, Gaussian/pose gradients
+(including rotation) and an optimizer update, plus flow/depth/refinement tests.
+These are primitive/adapter comparisons, not a full official training-run
+reproduction. Local CUDA compilation remains blocked by Windows Device Guard;
+**v2 CUDA execution and benchmark performance are unverified**. Run on the Linux
+training server:
 
 ```bash
 python -m pytest -q -m 'not cuda'
@@ -194,7 +240,7 @@ Then use a separate disposable output directory for a short pipeline check:
 
 ```bash
 python train_bad.py -s /path/to/blurfactory -m /outputs/bad_smoke/blurfactory \
-  --eval -r 4 --baseline --iterations 51 --eval_every 25 --save_every 25
+  --eval -r 1 --baseline --iterations 51 --eval_every 25 --save_every 25
 python render_bad.py -m /outputs/bad_smoke/blurfactory \
   --checkpoint /outputs/bad_smoke/blurfactory/bad_chkpnt50.pth --train_limit 1
 ```

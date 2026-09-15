@@ -1,7 +1,7 @@
 """BAD-style translation interpolation and cumulative SO(3) splines.
 
 Adapted from WU-CVGL/BAD-Gaussians (Apache-2.0); see THIRD_PARTY_NOTICES.md.
-Coordinates are OpenCV throughout. Controls are local camera-frame se(3) deltas.
+Camera adapters use OpenCV; controls use BAD's OpenGL local camera frame.
 """
 from dataclasses import dataclass, replace
 import torch
@@ -21,7 +21,10 @@ class Camera:
 
     @property
     def world_view_transform(self):
-        return torch.linalg.inv(self.c2w).T
+        r = self.c2w[:3, :3].T
+        t = -r @ self.c2w[:3, 3:4]
+        w2c = torch.cat((torch.cat((r, t), dim=1), self.c2w.new_tensor([[0, 0, 0, 1]])), dim=0)
+        return w2c.T
 
     @property
     def focal_x(self):
@@ -31,9 +34,10 @@ class Camera:
     def focal_y(self):
         return self.K[1, 1]
 
-    def scaled(self, width, height):
+    def scaled(self, width, height, factor=None):
         # Pixel-center coordinates used by the shared flow reprojection.
-        scale = self.K.new_tensor([width / self.image_width, height / self.image_height])
+        scale = self.K.new_tensor([width / self.image_width, height / self.image_height]
+                                 if factor is None else [factor, factor])
         k = self.K.clone()
         k[:2, :2] *= scale[:, None]
         k[:2, 2] = (k[:2, 2] + 0.5) * scale - 0.5
@@ -86,7 +90,9 @@ class ExposureTrajectory(nn.Module):
         else:
             times = torch.as_tensor(times, dtype=self.controls.dtype, device=self.controls.device)
         delta = interpolate(self.controls[index].Exp(), times, self.mode)
-        return self.base_c2w[index] @ delta.matrix()
+        flip = torch.diag(self.base_c2w.new_tensor([1, -1, -1, 1]))
+        # BAD composes base_gl @ delta_gl. Return OpenCV for renderer/flow.
+        return (self.base_c2w[index] @ flip @ delta.matrix()) @ flip
 
     def cameras(self, camera, times=None):
         return [replace(camera, c2w=pose) for pose in self.poses(camera.image_name, times)]

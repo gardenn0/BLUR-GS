@@ -1,50 +1,58 @@
-"""3DGS rasterization with pose gradients; no Nerfstudio/CoMo dependency.
+"""BAD bdd8b3e rendering calls, pinned to gsplat 0.1.11.
 
-gsplat 1.5.3 replaces the old gsplat 0.x backend. Parameter representation is
-standard 3DGS. Rasterization version is an explicit deviation from official BAD.
+Adapted from BAD-Gaussians (Apache-2.0). The legacy backend's approximate
+camera-rotation backward is deliberately preserved, not replaced or patched.
 """
 import torch
 from blur_gs.depth import normalize_z_features, z_features
 
 
 def require_backend():
-    import gsplat
-    if gsplat.__version__ != "1.5.3":
-        raise RuntimeError(f"Install gsplat==1.5.3; found {gsplat.__version__}")
-    return gsplat.rasterization
+    from importlib.metadata import version
+    if torch.__version__.split("+")[0] != "2.1.2" or version("torchvision").split("+")[0] != "0.16.2":
+        raise RuntimeError("Use the BAD-aligned Python 3.10 environment: torch 2.1.2 / torchvision 0.16.2")
+    if version("gsplat") != "0.1.11":
+        raise RuntimeError("BAD alignment requires gsplat==0.1.11; reinstall requirements-bad.txt")
+    from gsplat.project_gaussians import project_gaussians
+    from gsplat.rasterize import rasterize_gaussians
+    from gsplat.sh import spherical_harmonics
+    return project_gaussians, rasterize_gaussians, spherical_harmonics
 
 
 def render(camera, model, config, background, override_color=None, retain_stats=False):
-    rasterization = require_backend()
-    # SH viewing direction gradients are detached as in the BAD implementation.
-    if override_color is None:
-        if model.max_sh_degree == 0:
-            colors = model.params["features_dc"].sigmoid()
-        else:
-            from utils.sh_utils import eval_sh
-            directions = model.get_xyz.detach() - camera.c2w[:3, 3].detach()
-            directions = torch.nn.functional.normalize(directions, dim=-1)
-            colors = (eval_sh(model.active_sh_degree, model.get_features.transpose(1, 2), directions)+0.5).clamp_min(0)
-    else:
-        colors = override_color
-    # gsplat rasterizes at x+0.5/y+0.5; shared flow geometry uses integer centers.
+    project, rasterize, spherical_harmonics = require_backend()
+    # K uses integer pixel centers for flow; gsplat uses corner coordinates.
     k = camera.K.clone()
     k[:2, 2] += 0.5
-    image, alpha, info = rasterization(
-        means=model.get_xyz, quats=model.get_rotation, scales=model.get_scaling,
-        opacities=model.get_opacity.flatten(), colors=colors,
-        viewmats=camera.world_view_transform.T[None], Ks=k[None],
-        width=camera.image_width, height=camera.image_height,
-        near_plane=0.01, far_plane=1e10, eps2d=0.3, packed=False,
-        backgrounds=background[None], rasterize_mode=config.rasterize_mode,
-        render_mode="RGB", absgrad=False)
-    if retain_stats and info["means2d"].requires_grad:
-        info["means2d"].retain_grad()
-    # Do not clamp z feature channels! RGB clipping is upstream BAD behavior.
-    result = image[0].permute(2, 0, 1)
+    height, width = camera.image_height, camera.image_width
+    xys, depths, radii, conics, comp, tiles, _ = project(
+        model.get_xyz, model.get_scaling, 1,
+        model.params["quats"] / model.params["quats"].norm(dim=-1, keepdim=True),
+        camera.world_view_transform.T[:3, :],
+        k[0, 0].item(), k[1, 1].item(), k[0, 2].item(), k[1, 2].item(),
+        height, width, 16)
+    info = dict(means2d=xys, radii=radii, width=width, height=height)
+    if retain_stats and xys.requires_grad:
+        xys.retain_grad()
+    if radii.sum() == 0:
+        return dict(render=background[:, None, None].expand(3, height, width),
+                    alpha=background.new_zeros(1, height, width), info=info)
+    if override_color is not None:
+        colors = override_color
+    elif model.max_sh_degree > 0:
+        directions = model.get_xyz.detach() - camera.c2w[:3, 3].detach()
+        directions = directions / directions.norm(dim=-1, keepdim=True)
+        colors = (spherical_harmonics(model.active_sh_degree, directions, model.get_features)+0.5).clamp_min(0)
+    else:
+        colors = model.get_features[:, 0, :].sigmoid()
+    opacity = model.get_opacity
+    if config.rasterize_mode == "antialiased":
+        opacity = opacity * comp[:, None]
+    image, alpha = rasterize(xys, depths, radii, conics, tiles, colors, opacity,
+                            height, width, 16, background=background, return_alpha=True)
     if override_color is None:
-        result = result.clamp(max=1)
-    return {"render": result, "alpha": alpha[0].permute(2, 0, 1), "info": info}
+        image = image.clamp(max=1)
+    return dict(render=image.permute(2, 0, 1), alpha=alpha[None], info=info)
 
 
 def render_depth(camera, model, config, *, geometry_grad, min_alpha, render_fn=render):

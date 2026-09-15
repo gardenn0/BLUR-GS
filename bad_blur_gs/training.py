@@ -96,6 +96,8 @@ def training_step(step, camera, target, model, trajectory, camera_optimizer, con
     last_info = None
     for virtual in cameras:
         output = render_fn(virtual, model, config, background, retain_stats=True)
+        if not (output["info"]["radii"] > 0).any():
+            raise RuntimeError(f"No visible Gaussians in exposure view at step {step}; check input poses/points")
         images.append(output["render"])
         last_info = output["info"]
     image = torch.stack(images).mean(0)
@@ -202,8 +204,8 @@ def main(argv=None):
     train = [replace(c, c2w=c.c2w.cuda(), K=c.K.cuda()) for c in train]
     test = [replace(c, c2w=c.c2w.cuda(), K=c.K.cuda()) for c in test]
     state = torch.load(args.start_checkpoint, map_location="cuda", weights_only=False) if args.start_checkpoint else None
-    if state and state.get("bad_blur_gs_version") != 1:
-        raise ValueError("Use a BAD-BLUR-GS checkpoint, not a CoMo/Gaussian-only checkpoint")
+    if state and state.get("bad_blur_gs_version") != 2:
+        raise ValueError("Use a v2 BAD-aligned checkpoint; v1/CoMo checkpoints are incompatible")
     model = Gaussians(state["gaussians"], config) if state else Gaussians.from_points(xyz.cuda(), colors.cuda(), config)
     trajectory = ExposureTrajectory(train, config, "cuda")
     camera_optimizer = torch.optim.Adam([trajectory.controls], lr=config.camera_lr, eps=1e-15)

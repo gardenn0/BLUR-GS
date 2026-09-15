@@ -28,8 +28,8 @@ def main():
     old = metadata["args"]
     # Full optimizer checkpoints are pickle-based: only load files you trust.
     state = torch.load(args.checkpoint, map_location="cuda", weights_only=False)
-    if state.get("bad_blur_gs_version") != 1:
-        raise ValueError("Not a BAD-BLUR-GS checkpoint")
+    if state.get("bad_blur_gs_version") != 2:
+        raise ValueError("Use a v2 BAD-aligned checkpoint; v1/CoMo checkpoints are incompatible")
     cfg = BadConfig(**state["config"])
     train, test, _, _, manifest = load_scene(args.source_path or old["source_path"], old["images"],
         old["resolution"], old["eval"], old["llffhold"], cfg.scene_scale)

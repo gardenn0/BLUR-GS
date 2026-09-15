@@ -82,8 +82,8 @@ class Gaussians(nn.Module):
         xy = info["means2d"]
         if xy.grad is None:
             return
-        grad = xy.grad[0].norm(dim=-1)
-        radii = info["radii"][0]
+        grad = (xy.grad[0] if xy.ndim == 3 else xy.grad).norm(dim=-1)
+        radii = info["radii"][0] if xy.ndim == 3 else info["radii"]
         if radii.ndim == 2:
             radii = radii.amax(-1)
         visible = radii > 0

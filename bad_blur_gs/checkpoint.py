@@ -20,7 +20,7 @@ def restore_rng(state):
 
 
 def capture(step, model, trajectory, camera_optimizer, config, flow, manifest, stack):
-    return dict(bad_blur_gs_version=1, step=step, config=asdict(config), flow=asdict(flow),
+    return dict(bad_blur_gs_version=2, step=step, config=asdict(config), flow=asdict(flow),
                 data=manifest, gaussians={k: p.detach().clone() for k, p in model.params.items()},
                 active_sh_degree=model.active_sh_degree, gaussian_optimizer=model.optimizer.state_dict(),
                 refinement={k: getattr(model, k) for k in ("grad_sum", "vis_count", "max_radii")},
@@ -37,8 +37,8 @@ def save_atomic(state, path):
 
 
 def restore(state, model, trajectory, camera_optimizer, config, flow, manifest):
-    if state.get("bad_blur_gs_version") != 1:
-        raise ValueError("Not a BAD-BLUR-GS checkpoint (CoMo checkpoints are incompatible)")
+    if state.get("bad_blur_gs_version") != 2:
+        raise ValueError("Use a v2 BAD-aligned checkpoint; v1/CoMo checkpoints are incompatible")
     if state["config"] != asdict(config):
         raise ValueError("BAD training settings differ from checkpoint")
     old, new = dict(state["flow"]), asdict(flow)

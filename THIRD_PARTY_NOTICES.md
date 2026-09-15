@@ -15,6 +15,14 @@ with its original research-use notice. Those terms continue to apply.
 `docs/BAD_BLUR_GS.md` for implementation deviations and references. The standalone
 port is not an official BAD-Gaussians release or a new-method novelty claim.
 
+The v2 alignment adds `bad_blur_gs/coordinates.py`, adapted from Nerfstudio
+v1.0.3 `camera_utils.py` and `colmap_dataparser.py`. Unmodified helper bodies
+are included in `tests/reference/ns_camera_utils_v103.py` for comparison.
+`tests/reference/bad_render.py` is an independent transcription of the
+single-view rendering sequence from BAD commit bdd8b3e. These are Apache-2.0,
+with the upstream copyright notices retained. The production renderer calls
+gsplat 0.1.11 without modifying its CUDA kernels or approximate pose backward.
+
 This is an experimental implementation of BLUR-GS, based on **CoMoGaussian** by
 Jungho Lee et al. (ICCV 2025). It is not an official implementation by the authors
 of CoMoGaussian or Image as an IMU, and no benchmark improvement is claimed.

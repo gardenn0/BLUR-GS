@@ -221,7 +221,9 @@ def test_colmap_split_intrinsics_scale_and_no_source_mutation(tmp_path):
     assert [c.image_name for c in test] == ["000", "008", "016"]
     assert len(train) == 14 and set(tmp_path.rglob("*")) == before
     assert train[0].K[0, 2] == 22.5
-    assert max(abs(c.c2w[0, 3]) for c in train) == pytest.approx(.25)
+    # BAD scales all poses BEFORE splitting; heldout endpoints set the extent.
+    assert max(abs(c.c2w[0, 3]) for c in train) == pytest.approx(.21875)
+    assert max(abs(c.c2w[0, 3]) for c in train+test) == pytest.approx(.25)
     assert xyz.shape == colors.shape == (4, 3)
     assert manifest["train"] == [c.image_name for c in train]
 

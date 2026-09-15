@@ -2,6 +2,13 @@
 
 Two independent training paths are available:
 
+**Branch layout:** `main` contains the original CoMo-based BLUR-GS.
+This `bad-blur-gs` branch contains the BAD experiment. The v2 BAD entrypoint now
+uses gsplat **0.1.11**, the official BAD torch **2.1.2 / torchvision 0.16.2** pair,
+and Nerfstudio v1.0.3's default all-pose COLMAP normalization. Reinstall the BAD
+environment and start fresh runs; v1 BAD checkpoints are incompatible. See the
+guide for CPU comparison tests and the still-unverified CUDA/benchmark status.
+
 | Entry point | Backbone | Guide |
 |---|---|---|
 | `python train.py` | Original CoMoGaussian-based BLUR-GS | This README |
