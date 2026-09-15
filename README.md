@@ -1,5 +1,18 @@
 # BLUR-GS
 
+Two independent training paths are available:
+
+| Entry point | Backbone | Guide |
+|---|---|---|
+| `python train.py` | Original CoMoGaussian-based BLUR-GS | This README |
+| `python train_bad.py` | Standalone 3DGS with BAD-style exposure trajectories | [BAD-BLUR-GS setup and experiments](docs/BAD_BLUR_GS.md) |
+
+The BAD path preserves the familiar `-s`, `-m`, `--eval`, `-r`,
+`--iaai_checkpoint` and `--baseline` options. Its `--baseline` is a **BAD-style
+no-flow control**, not CoMoGaussian. Install `requirements-bad.txt`; it uses a
+different rasterizer and schedule. See the guide for exact settings and known
+deviations from official BAD-Gaussians. Existing CoMo experiments are unchanged.
+
 **Geometry-coupled blur-flow supervision on top of CoMoGaussian.**
 
 Experimental implementation based on discussions of BLUR-GS/BlurTraj-GS and
